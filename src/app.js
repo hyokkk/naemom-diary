@@ -75,6 +75,11 @@ const active = (m, d) => m.start <= d && (!m.end || d <= m.end);
 const visItems = () => S.items.filter((i) => !i.hidden);
 const itemById = (id) => S.items.find((i) => i.id === id);
 const recOf = (d, id) => (S.rec[d] || {})[id];
+function symList(it, r) {
+  if (!r || !r.sx) return [];
+  return (it.symptoms || []).filter((y) => y.id in r.sx).map((y) => ({ y, op: y.options.find((x) => x.id === r.sx[y.id]) }));
+}
+const symLabel = (e) => `${esc(e.y.name)}${e.op ? " " + esc(e.op.label) : ""}`;
 function score(it, r) { if (!r || !r.o) return null; const i = it.options.findIndex((x) => x.id === r.o); return i < 0 ? null : i + 1; }
 
 let tt;
@@ -107,6 +112,21 @@ const DEFAULT_ITEMS = [
   ["배변", "choice", null, ["묽음", "정상", "단단함"]],
   ["기타 메모", "text"],
 ];
+/* 몸 상태에 딸린 주요 증상 기본값. 증상마다 선택지를 설정 화면에서 바꿀 수 있다. */
+const DEFAULT_SYMPTOMS = ["복부 팽만/가스", "속쓰림", "명치뭉침", "위 쥐어짬"];
+const DEFAULT_SYMPTOM_OPTIONS = ["약함", "보통", "심함"];
+async function createSymptomDefaults(itemId) {
+  const sy = [], so = [];
+  DEFAULT_SYMPTOMS.forEach((name, i) => {
+    const id = uuid();
+    sy.push({ id, user_id: USER.id, item_id: itemId, name, sort_order: i, is_hidden: false });
+    DEFAULT_SYMPTOM_OPTIONS.forEach((label, j) => so.push({ id: uuid(), user_id: USER.id, symptom_id: id, label, sort_order: j, is_hidden: false }));
+  });
+  let r = await sb.from("symptoms").insert(sy);
+  if (r.error) throw r.error;
+  r = await sb.from("symptom_options").insert(so);
+  if (r.error) throw r.error;
+}
 async function createDefaults() {
   const items = [], opts = [];
   DEFAULT_ITEMS.forEach(([name, type, unit, options], i) => {
@@ -118,10 +138,11 @@ async function createDefaults() {
   if (r.error) throw r.error;
   r = await sb.from("item_options").insert(opts);
   if (r.error) throw r.error;
+  await createSymptomDefaults(items[0].id);
 }
 
 async function loadAll() {
-  const [items, opts, recs, meals, meds, sups, onces] = await Promise.all([
+  const [items, opts, recs, meals, meds, sups, onces, syms, symOpts, symRecs] = await Promise.all([
     fetchAll("items", ["sort_order", "id"]),
     fetchAll("item_options", ["sort_order", "id"]),
     fetchAll("daily_records", ["date", "item_id"]),
@@ -129,15 +150,32 @@ async function loadAll() {
     fetchAll("medications", ["start_date", "id"]),
     fetchAll("supplement_logs", ["date", "medication_id"]),
     fetchAll("onetime_meds", ["date", "created_at", "id"]),
+    fetchAll("symptoms", ["sort_order", "id"]),
+    fetchAll("symptom_options", ["sort_order", "id"]),
+    fetchAll("symptom_records", ["date", "symptom_id"]),
   ]);
   if (!items.length) { await createDefaults(); return loadAll(); }
+  /* v1.0에서 가입해 주요 증상이 없는 계정은 몸 상태에 기본 증상을 만들어 준다 */
+  if (!syms.length) {
+    const base = items.find((x) => x.type === "scale" && x.name === "몸 상태") || items.find((x) => x.type === "scale");
+    if (base) { await createSymptomDefaults(base.id); return loadAll(); }
+  }
   const s = emptyState();
   s.items = items
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((r) => ({ id: r.id, name: r.name, type: r.type, unit: r.unit || "", hidden: r.is_hidden, options: [] }));
+    .map((r) => ({ id: r.id, name: r.name, type: r.type, unit: r.unit || "", hidden: r.is_hidden, options: [], symptoms: [] }));
   for (const o of opts.sort((a, b) => a.sort_order - b.sort_order)) {
     const it = s.items.find((x) => x.id === o.item_id);
     if (it) it.options.push({ id: o.id, label: o.label, hidden: o.is_hidden });
+  }
+  const symIndex = {};
+  for (const y of syms.sort((a, b) => a.sort_order - b.sort_order)) {
+    const it = s.items.find((x) => x.id === y.item_id); if (!it) continue;
+    const sy = { id: y.id, name: y.name, hidden: y.is_hidden, options: [] };
+    it.symptoms.push(sy); symIndex[y.id] = [it, sy];
+  }
+  for (const o of symOpts.sort((a, b) => a.sort_order - b.sort_order)) {
+    const e = symIndex[o.symptom_id]; if (e) e[1].options.push({ id: o.id, label: o.label, hidden: o.is_hidden });
   }
   for (const r of recs) {
     const it = s.items.find((x) => x.id === r.item_id); if (!it) continue;
@@ -148,6 +186,11 @@ async function loadAll() {
     else if (it.type === "bool") v = r.value_bool == null ? null : { v: r.value_bool };
     else if (it.type === "text") v = r.value_text ? { v: r.value_text } : null;
     if (v) (s.rec[r.date] = s.rec[r.date] || {})[r.item_id] = v;
+  }
+  for (const x of symRecs) {
+    const e = symIndex[x.symptom_id]; if (!e) continue;
+    const day = (s.rec[x.date] = s.rec[x.date] || {}), rec = (day[e[0].id] = day[e[0].id] || {});
+    (rec.sx = rec.sx || {})[x.symptom_id] = x.option_id || null;
   }
   for (const m of meals) {
     (s.meal[m.date] = s.meal[m.date] || {})[MEAL_KEY[m.meal_type]] = { t: m.note || "", p: m.photo_path || null, th: m.thumb_path || null };
@@ -195,6 +238,26 @@ function setRec(d, id, val) {
   const it = itemById(id);
   if (val == null) return run("기록", sb.from("daily_records").delete().eq("date", d).eq("item_id", id));
   return run("기록", sb.from("daily_records").upsert(recRow(it, d, val), { onConflict: "user_id,date,item_id" }));
+}
+/* 단계형 기록: 단계(daily_records)와 주요 증상(symptom_records)을 따로 저장한다 */
+function setLocal(d, id, val) { S.rec[d] = S.rec[d] || {}; if (val == null) delete S.rec[d][id]; else S.rec[d][id] = val; }
+function patchScale(d, it, patch) {
+  const n = Object.assign({}, recOf(d, it.id) || {}, patch);
+  if (n.o == null) delete n.o;
+  if (n.sx && !Object.keys(n.sx).length) delete n.sx;
+  setLocal(d, it.id, Object.keys(n).length ? n : null);
+}
+function setScaleLevel(d, it, o) {
+  patchScale(d, it, { o });
+  if (!o) return run("몸 상태", sb.from("daily_records").delete().eq("date", d).eq("item_id", it.id));
+  return run("몸 상태", sb.from("daily_records").upsert(recRow(it, d, { o }), { onConflict: "user_id,date,item_id" }));
+}
+function setSymptom(d, it, sid, val) { // val: undefined = 체크 해제, null = 정도 미기록, 문자열 = 선택지 ID
+  const sx = Object.assign({}, (recOf(d, it.id) || {}).sx);
+  if (val === undefined) delete sx[sid]; else sx[sid] = val;
+  patchScale(d, it, { sx });
+  if (val === undefined) return run("주요 증상", sb.from("symptom_records").delete().eq("date", d).eq("symptom_id", sid));
+  return run("주요 증상", sb.from("symptom_records").upsert({ user_id: USER.id, date: d, symptom_id: sid, option_id: val }, { onConflict: "user_id,date,symptom_id" }));
 }
 function saveMeal(d, k) {
   const m = (S.meal[d] || {})[k] || {};
@@ -307,6 +370,11 @@ function itemCard(it, d, r) {
   if (it.type === "scale") {
     const os = it.options.filter((x) => !x.hidden);
     body = `<div class="scale" style="--n:${os.length}">${os.map((x) => { const n = it.options.indexOf(x) + 1; return `<button class="chip${r && r.o === x.id ? " on" : ""}" data-act="pick" data-i="${it.id}" data-o="${x.id}"><b>${n}</b><span>${esc(x.label)}</span></button>`; }).join("")}</div>`;
+    const sys = (it.symptoms || []).filter((y) => !y.hidden), sx = (r && r.sx) || {};
+    if (sys.length) body += `<div class="sym"><div class="ttl"><span>주요 증상</span><span>${Object.keys(sx).length}개 체크</span></div>${sys.map((y) => {
+      const on = y.id in sx;
+      return `<div class="symrow"><button class="chip sm${on ? " on" : ""}" data-act="sym" data-i="${it.id}" data-s="${y.id}" aria-pressed="${on}">${esc(y.name)}</button>${on ? `<span class="lvl">${y.options.filter((x) => !x.hidden || x.id === sx[y.id]).map((x) => `<button class="chip sm${sx[y.id] === x.id ? " on" : ""}" data-act="symopt" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}">${esc(x.label)}</button>`).join("")}</span>` : ""}</div>`;
+    }).join("")}</div>`;
   } else if (it.type === "number") {
     body = `<div class="numin"><input type="number" inputmode="decimal" step="0.1" id="n-${it.id}" data-ch="num" data-i="${it.id}" value="${r ? r.v : ""}" placeholder="0.0"><span class="muted">${esc(it.unit || "")}</span></div>`;
   } else if (it.type === "bool" || it.type === "choice") {
@@ -350,7 +418,7 @@ function medCard(d) {
 /* calendar */
 const CAT = ["--c1", "--c2", "--c6", "--c7", "--c8", "--c9", "--c10"];
 function colorOf(k) {
-  if (k === "supp") return "var(--c3)"; if (k === "reg") return "var(--c4)"; if (k === "once") return "var(--c5)";
+  if (k === "supp") return "var(--c3)"; if (k === "reg") return "var(--c4)"; if (k === "once") return "var(--c5)"; if (k === "sym") return "var(--lv2)";
   const it = itemById(k); if (it && it.type === "scale") return "var(--lv5)";
   const i = S.items.filter((x) => x.type !== "scale").findIndex((x) => x.id === k);
   return `var(${CAT[Math.max(0, i) % CAT.length]})`;
@@ -358,11 +426,12 @@ function colorOf(k) {
 const isScale = (k) => { const it = itemById(k); return !!it && it.type === "scale"; };
 function lvOf(it, s) { const n = it.options.length; return n <= 1 ? 5 : Math.round(1 + (4 * (s - 1)) / (n - 1)); }
 function lvCircle(k, d) { const it = itemById(k), s = score(it, recOf(d, k)); return s ? `<span class="lvc lv${lvOf(it, s)}" title="${esc(it.name)} ${s}단계">${s}</span>` : ""; }
-function filterKeys() { return [...visItems().map((i) => ({ k: i.id, n: i.name })), { k: "supp", n: "영양제" }, { k: "reg", n: "정기 복용 약" }, { k: "once", n: "일회성 약" }]; }
+function filterKeys() { return [...visItems().map((i) => ({ k: i.id, n: i.name })), ...(visItems().some((i) => i.symptoms && i.symptoms.length) ? [{ k: "sym", n: "주요 증상" }] : []), { k: "supp", n: "영양제" }, { k: "reg", n: "정기 복용 약" }, { k: "once", n: "일회성 약" }]; }
 function calTag(k, d) {
   const T = (txt, cls) => `<span class="tg c${cls ? " " + cls : ""}" style="--c:${colorOf(k)}">${txt}</span>`;
   if (k === "supp") { const a = S.meds.filter((m) => m.kind === "supplement" && active(m, d)); if (!a.length) return ""; const t = a.filter((m) => (S.sup[d] || {})[m.id]).length; return T(`영양 ${t}/${a.length}`, t === a.length ? "solid" : ""); }
   if (k === "reg") { const a = S.meds.filter((m) => m.kind === "regular" && active(m, d)); return a.length ? T(esc(a.map((m) => m.name).join(", ")), "line") : ""; }
+  if (k === "sym") { const es = visItems().flatMap((it) => symList(it, recOf(d, it.id))); return es.length ? `<span class="tg c" style="--c:${colorOf(k)}" title="${es.map(symLabel).join(", ")}">증상 ${es.length}</span>` : ""; }
   if (k === "once") { const a = S.once[d] || []; return a.length ? T(`${esc(a[0].n)}${a.length > 1 ? ` 외 ${a.length - 1}` : ""}`) : ""; }
   const it = itemById(k); if (!it) return "";
   if (it.type === "meal") { const m = S.meal[d] || {}; const n = MEALS.filter(([x]) => m[x] && (m[x].t || m[x].th)).length; return n ? T(`식사 ${n}/3`) : ""; }
@@ -420,6 +489,7 @@ function dayRow(d, base) {
   }
   const a = S.meds.filter((m) => m.kind === "supplement" && active(m, d));
   if (a.length) { const t = a.filter((m) => (S.sup[d] || {})[m.id]).length; tags.push(`<span class="tg c" style="--c:${colorOf("supp")}">영양제 ${t}/${a.length}</span>`); }
+  symList(base, r[base.id]).forEach((e) => tags.push(`<span class="tg c solid" style="--c:var(--lv2)">${symLabel(e)}</span>`));
   const once = S.once[d] || [];
   if (once.length) tags.push(`<span class="tg c" style="--c:${colorOf("once")}">${esc(once.map((x) => x.n).join(", "))}</span>`);
   const sc = score(base, r[base.id]);
@@ -457,6 +527,17 @@ const avg = (a) => (a.length ? a.reduce((x, z) => x + z, 0) / a.length : null);
 const signed = (d, u) => `${d > 0 ? "+" : d < 0 ? "−" : "±"}${Math.abs(d).toFixed(1)}${u}`;
 function hasRec(it, past) { return past.some((d) => (it.type === "meal" ? S.meal[d] : recOf(d, it.id) != null)); }
 
+function symCard(it, past) {
+  if (!it.symptoms || !it.symptoms.length) return "";
+  const rs = past.map((d) => recOf(d, it.id)).filter(Boolean), n = rs.length;
+  return `<section class="card"><h3><span>${esc(it.name)} 주요 증상</span><small>기록 ${n}일 중</small></h3>${it.symptoms.map((y) => {
+    const hit = rs.filter((r) => r.sx && y.id in r.sx);
+    if (y.hidden && !hit.length) return "";
+    const br = y.options.map((x) => [x.label, hit.filter((r) => r.sx[y.id] === x.id).length]).filter((a) => a[1]), none = hit.filter((r) => !r.sx[y.id]).length;
+    const parts = [...br.map(([l, c]) => `${esc(l)} ${c}`), ...(none ? [`정도 미기록 ${none}`] : [])];
+    return bar(y.name, hit.length, n, `${hit.length}일`) + (parts.length ? `<div class="small muted symbr">${parts.join(" / ")}</div>` : "");
+  }).join("")}</section>`;
+}
 function vRep() {
   const [s, e, label] = repRange(), days = daysOf(s, e), past = days.filter((d) => d <= TODAY);
   let h = `<div class="row" style="justify-content:center;margin-bottom:10px"><div class="toggle">${[["week", "주간"], ["month", "월간"], ["year", "연간"]].map(([k, l]) => `<button class="${UI.rep === k ? "on" : ""}" data-act="repmode" data-k="${k}">${l}</button>`).join("")}</div></div>`;
@@ -468,7 +549,7 @@ function vRep() {
     const tag = it.hidden ? ' <span class="pill">숨긴 항목</span>' : "";
     if (it.type === "scale") {
       const ok = past.map((d) => score(it, recOf(d, it.id))).filter((x) => x != null), a = avg(ok);
-      h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${ok.length}일</small></h3><div class="big">${a == null ? "-" : a.toFixed(1)}<small> / ${it.options.length} 평균</small></div>${ok.length ? lineChart(days.map((d) => (d <= TODAY ? score(it, recOf(d, it.id)) : null)), days, 1, it.options.length) : ""}</section>`;
+      h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${ok.length}일</small></h3><div class="big">${a == null ? "-" : a.toFixed(1)}<small> / ${it.options.length} 평균</small></div>${ok.length ? lineChart(days.map((d) => (d <= TODAY ? score(it, recOf(d, it.id)) : null)), days, 1, it.options.length) : ""}</section>` + symCard(it, past);
     } else if (it.type === "number") {
       const v = days.map((d) => { const r = recOf(d, it.id); return r ? r.v : null; }), ok = v.filter((x) => x != null), u = esc(it.unit || "");
       if (ok.length) {
@@ -514,7 +595,7 @@ function vYear(past) {
     if (it.type === "scale") {
       const sc = (d) => score(it, recOf(d, it.id));
       const all = past.map(sc).filter((x) => x != null), mv = M.map((ds) => avg(ds.map(sc).filter((x) => x != null))), a = avg(all);
-      h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${all.length}일 · 월평균</small></h3><div class="big">${a == null ? "-" : a.toFixed(1)}<small> / ${it.options.length} 연평균</small></div>${all.length ? mChart(mv, 1, it.options.length, false) : ""}</section>`;
+      h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${all.length}일 · 월평균</small></h3><div class="big">${a == null ? "-" : a.toFixed(1)}<small> / ${it.options.length} 연평균</small></div>${all.length ? mChart(mv, 1, it.options.length, false) : ""}</section>` + symCard(it, past);
     } else if (it.type === "number") {
       const val = (ds) => ds.map((d) => recOf(d, it.id)).filter(Boolean).map((r) => r.v);
       const seq = val(past), mv = M.map((ds) => avg(val(ds))), u = esc(it.unit || "");
@@ -556,7 +637,10 @@ function vSet() {
     const hasOpt = it.type === "scale" || it.type === "choice", open = UI.open[it.id];
     h += `<div class="item${it.hidden ? " hid" : ""}"><div class="top"><input class="nm" type="text" id="in-${it.id}" data-ch="iname" data-i="${it.id}" value="${esc(it.name)}" aria-label="항목 이름">
    <div class="row"><button class="mini" data-act="imove" data-i="${it.id}" data-n="-1" ${i === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="imove" data-i="${it.id}" data-n="1" ${i === S.items.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="ihide" data-i="${it.id}">${it.hidden ? "다시 표시" : "숨기기"}</button></div></div>
-   <div class="row"><span class="pill">${TYPES[it.type]}${it.unit ? ` · ${esc(it.unit)}` : ""}</span>${it.hidden ? '<span class="pill warm">숨김</span>' : ""}${hasOpt ? `<button class="link" data-act="iopen" data-i="${it.id}">${open ? "선택지 접기" : `선택지 편집 (${it.options.filter((x) => !x.hidden).length}개)`}</button>` : ""}</div>`;
+   <div class="row"><span class="pill">${TYPES[it.type]}${it.unit ? ` · ${esc(it.unit)}` : ""}</span>${it.hidden ? '<span class="pill warm">숨김</span>' : ""}${hasOpt ? `<button class="link" data-act="iopen" data-i="${it.id}">${open ? "선택지 접기" : `선택지 편집 (${it.options.filter((x) => !x.hidden).length}개)`}</button>` : ""}${it.symptoms && it.symptoms.length ? `<button class="link" data-act="symopen" data-i="${it.id}">${UI.open["sx" + it.id] ? "증상 선택지 접기" : "주요 증상 선택지 편집"}</button>` : ""}</div>`;
+    if (it.symptoms && it.symptoms.length && UI.open["sx" + it.id]) {
+      h += `<div class="opts"><p class="small muted" style="margin:0">증상마다 고를 수 있는 선택지입니다. 숨긴 선택지는 기록 화면에서 빠지고, 지난 기록에는 남습니다.</p>${it.symptoms.map((y) => `<div class="symset"><strong>${esc(y.name)}</strong>${y.options.map((x, j) => `<div class="opt${x.hidden ? " hid" : ""}"><span class="small muted">·</span><input type="text" id="sl-${x.id}" data-ch="solabel" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" value="${esc(x.label)}" aria-label="${esc(y.name)} 선택지 이름"><div class="row"><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="-1" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="1" ${j === y.options.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="sohide" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}">${x.hidden ? "표시" : "숨김"}</button></div></div>`).join("")}<div class="grid2" style="grid-template-columns:minmax(0,1fr) auto;margin-top:0"><input type="text" id="so-${y.id}" placeholder="${esc(y.name)} 새 선택지"><button class="btn sm" data-act="soadd" data-i="${it.id}" data-s="${y.id}">추가</button></div></div>`).join("")}</div>`;
+    }
     if (hasOpt && open) {
       h += `<div class="opts">${it.options.map((x, j) => `<div class="opt${x.hidden ? " hid" : ""}"><span class="small muted num-t">${it.type === "scale" ? j + 1 : "·"}</span><input type="text" id="ol-${x.id}" data-ch="olabel" data-i="${it.id}" data-o="${x.id}" value="${esc(x.label)}" aria-label="선택지 이름"><div class="row"><button class="mini" data-act="omove" data-i="${it.id}" data-o="${x.id}" data-n="-1" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="omove" data-i="${it.id}" data-o="${x.id}" data-n="1" ${j === it.options.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="ohide" data-i="${it.id}" data-o="${x.id}">${x.hidden ? "표시" : "숨김"}</button></div></div>`).join("")}
     <div class="grid2" style="grid-template-columns:minmax(0,1fr) auto"><input type="text" id="on-${it.id}" placeholder="새 선택지"><button class="btn sm" data-act="oadd" data-i="${it.id}">추가</button></div>
@@ -576,6 +660,7 @@ function vSet() {
 }
 
 /* ---------- 동작 ---------- */
+function symOf(t) { return itemById(t.dataset.i).symptoms.find((y) => y.id === t.dataset.s); }
 function go(v) { UI.view = v; saveUI(); render(); window.scrollTo(0, 0); }
 const act = {
   nav: (t) => go(t.dataset.v),
@@ -583,9 +668,23 @@ const act = {
   dtoday: () => { UI.date = TODAY; saveUI(); render(); },
   pick: (t) => {
     const it = itemById(t.dataset.i), d = UI.date, r = recOf(d, it.id);
-    if (it.type === "scale") setRec(d, it.id, r && r.o === t.dataset.o ? null : { o: t.dataset.o });
+    if (it.type === "scale") setScaleLevel(d, it, r && r.o === t.dataset.o ? null : t.dataset.o);
     else setRec(d, it.id, { v: true, o: r && r.o === t.dataset.o ? undefined : t.dataset.o });
     render();
+  },
+  sym: (t) => { const it = itemById(t.dataset.i), d = UI.date, sx = (recOf(d, it.id) || {}).sx || {}; setSymptom(d, it, t.dataset.s, t.dataset.s in sx ? undefined : null); render(); },
+  symopt: (t) => { const it = itemById(t.dataset.i), d = UI.date, sx = (recOf(d, it.id) || {}).sx || {}; setSymptom(d, it, t.dataset.s, sx[t.dataset.s] === t.dataset.o ? null : t.dataset.o); render(); },
+  symopen: (t) => { UI.open["sx" + t.dataset.i] = !UI.open["sx" + t.dataset.i]; saveUI(); render(); },
+  somove: (t) => {
+    const y = symOf(t), i = y.options.findIndex((x) => x.id === t.dataset.o), j = i + +t.dataset.n;
+    [y.options[i], y.options[j]] = [y.options[j], y.options[i]]; render();
+    run("증상 선택지 순서", ...y.options.map((x, k) => sb.from("symptom_options").update({ sort_order: k }).eq("id", x.id)));
+  },
+  sohide: (t) => { const x = symOf(t).options.find((o) => o.id === t.dataset.o); x.hidden = !x.hidden; render(); run("증상 선택지", sb.from("symptom_options").update({ is_hidden: x.hidden }).eq("id", x.id)); },
+  soadd: (t) => {
+    const y = symOf(t), v = document.getElementById("so-" + y.id).value.trim(); if (!v) return;
+    const o = { id: uuid(), label: v, hidden: false }; y.options.push(o); render();
+    run("증상 선택지", sb.from("symptom_options").insert({ id: o.id, user_id: USER.id, symptom_id: y.id, label: v, sort_order: y.options.length - 1, is_hidden: false }));
   },
   bool: (t) => { const d = UI.date, id = t.dataset.i, v = t.dataset.v === "true", r = recOf(d, id); setRec(d, id, r && r.v === v ? null : { v }); render(); },
   photo: async (t) => {
@@ -654,7 +753,7 @@ const act = {
   iadd: async () => {
     const n = document.getElementById("ni-name").value.trim(), t = UI.niType;
     if (!n) { toast("항목 이름을 입력해 주세요."); return; }
-    const it = { id: uuid(), name: n, type: t, unit: "", hidden: false, options: [] };
+    const it = { id: uuid(), name: n, type: t, unit: "", hidden: false, options: [], symptoms: [] };
     if (t === "number") it.unit = (document.getElementById("ni-unit").value || "").trim();
     if (t === "scale" || t === "choice") {
       const ops = (document.getElementById("ni-opts").value || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -733,6 +832,7 @@ document.addEventListener("change", async (e) => {
     run("약/영양제", sb.from("medications").update({ start_date: m.start, end_date: m.end || null }).eq("id", m.id));
   }
   else if (c === "iname") { const v = t.value.trim(), it = itemById(t.dataset.i); if (!v) { render(); return; } it.name = v; run("항목 이름", sb.from("items").update({ name: v }).eq("id", it.id)); }
+  else if (c === "solabel") { const v = t.value.trim(), x = symOf(t).options.find((o) => o.id === t.dataset.o); if (!v) { render(); return; } x.label = v; run("증상 선택지 이름", sb.from("symptom_options").update({ label: v }).eq("id", x.id)); }
   else if (c === "olabel") { const v = t.value.trim(), x = itemById(t.dataset.i).options.find((o) => o.id === t.dataset.o); if (!v) { render(); return; } x.label = v; run("선택지 이름", sb.from("item_options").update({ label: v }).eq("id", x.id)); }
   else if (c === "nitype") { UI.niType = t.value; saveUI(); const nm = document.getElementById("ni-name").value; render(); document.getElementById("ni-name").value = nm; }
 });

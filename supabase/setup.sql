@@ -8,6 +8,9 @@
 -- Supabase 대시보드 > SQL Editor > New query 에 붙여넣고 Run
 -- ============================================================
 
+drop table if exists symptom_records  cascade;
+drop table if exists symptom_options  cascade;
+drop table if exists symptoms         cascade;
 drop table if exists onetime_meds     cascade;
 drop table if exists supplement_logs  cascade;
 drop table if exists medications      cascade;
@@ -105,11 +108,44 @@ create table onetime_meds (
 create index onetime_meds_user_idx on onetime_meds (user_id, date);
 
 
--- 8) 권한: 로그인한 본인 행만 읽고 쓴다 ------------------------
+-- 8) 몸 상태 주요 증상 (v1.1) -----------------------------
+-- 단계형 항목(몸 상태)에 딸린 증상 목록과 증상별 선택지
+create table symptoms (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  item_id     uuid not null references items(id) on delete cascade,
+  name        text not null,
+  sort_order  int  not null default 0,
+  is_hidden   boolean not null default false
+);
+create index symptoms_user_idx on symptoms (user_id);
+
+create table symptom_options (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  symptom_id  uuid not null references symptoms(id) on delete cascade,
+  label       text not null,
+  sort_order  int  not null default 0,
+  is_hidden   boolean not null default false
+);
+create index symptom_options_user_idx on symptom_options (user_id);
+
+-- 날짜별 증상 체크. 행이 있으면 체크, option_id 가 비어 있으면 정도 미기록
+create table symptom_records (
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date        date not null,
+  symptom_id  uuid not null references symptoms(id) on delete cascade,
+  option_id   uuid references symptom_options(id) on delete set null,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, date, symptom_id)
+);
+
+
+-- 9) 권한: 로그인한 본인 행만 읽고 쓴다 ------------------------
 do $$
 declare t text;
 begin
-  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds'] loop
+  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records'] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists own_rows on %I', t);
     execute format(
@@ -120,7 +156,7 @@ begin
 end $$;
 
 
--- 9) 사진 버킷 (비공개) ---------------------------------------
+-- 10) 사진 버킷 (비공개) ---------------------------------------
 -- 경로 규칙: <사용자 ID>/<날짜>/<끼니>-<시각>.jpg
 -- 첫 폴더 이름이 본인 ID인 파일만 읽고 쓸 수 있다.
 insert into storage.buckets (id, name, public)

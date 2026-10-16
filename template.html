@@ -172,6 +172,16 @@ textarea{min-height:72px;resize:vertical}
 .login h1{font-family:var(--f-display);font-size:34px;margin:0}
 .err{color:var(--danger);font-size:13px;min-height:1em}
 .empty{color:var(--muted);font-size:13px;padding:4px 0}
+.sym{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:8px}
+.sym .ttl{font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+.symrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.symrow .chip.on{background:var(--lv2);border-color:var(--lv2);color:var(--lv2t)}
+.symrow .lvl{display:flex;gap:4px;flex-wrap:wrap}
+.symrow .lvl .chip.on{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+.symset{display:flex;flex-direction:column;gap:6px}
+.symset + .symset{margin-top:6px}
+.symset > strong{font-size:13px}
+.symbr{margin:2px 0 0 80px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;z-index:30;max-width:calc(100% - 32px)}
 .ov{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:40;padding:24px}
 .ov img{max-width:100%;max-height:100%;border-radius:8px}
