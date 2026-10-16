@@ -8,6 +8,7 @@
 -- Supabase 대시보드 > SQL Editor > New query 에 붙여넣고 Run
 -- ============================================================
 
+drop table if exists hospital_visits  cascade;
 drop table if exists symptom_records  cascade;
 drop table if exists symptom_options  cascade;
 drop table if exists symptoms         cascade;
@@ -96,13 +97,14 @@ create table supplement_logs (
   primary key (user_id, date, medication_id)
 );
 
--- 7) 일회성 복용 약 ------------------------------------------
+-- 7) 일회성 복용 약 (symptom: 먹은 이유, effect: 차도) ------------
 create table onetime_meds (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
   date        date not null,
   name        text not null,
-  note        text,
+  symptom     text,
+  effect      text,
   created_at  timestamptz not null default now()
 );
 create index onetime_meds_user_idx on onetime_meds (user_id, date);
@@ -141,11 +143,24 @@ create table symptom_records (
 );
 
 
--- 9) 권한: 로그인한 본인 행만 읽고 쓴다 ------------------------
+-- 9) 병원 치료 일지 (v1.2) — 하루 1건, 행이 있으면 "치료 받은 날" ----
+create table hospital_visits (
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date        date not null,
+  hospital    text,
+  treatment   text,
+  note        text,
+  next_date   date,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, date)
+);
+
+
+-- 10) 권한: 로그인한 본인 행만 읽고 쓴다 ------------------------
 do $$
 declare t text;
 begin
-  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records'] loop
+  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits'] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists own_rows on %I', t);
     execute format(
@@ -156,7 +171,7 @@ begin
 end $$;
 
 
--- 10) 사진 버킷 (비공개) ---------------------------------------
+-- 11) 사진 버킷 (비공개) ---------------------------------------
 -- 경로 규칙: <사용자 ID>/<날짜>/<끼니>-<시각>.jpg
 -- 첫 폴더 이름이 본인 ID인 파일만 읽고 쓸 수 있다.
 insert into storage.buckets (id, name, public)
