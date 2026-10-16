@@ -1,0 +1,257 @@
+// 가짜 Supabase와 가상 브라우저(jsdom)로 가입부터 기록/리포트/로그아웃까지 확인한다.
+// 실행: npm test   (내부적으로 node build.mjs --dev 후 이 파일을 실행)
+const { JSDOM } = require("jsdom");
+const fs = require("fs");
+const { createMock } = require("./mock-supabase.cjs");
+
+let BUNDLE = fs.readFileSync("test/.bundle.js", "utf8");
+// 연결 정보가 아직 비어 있으면 테스트용 주소로 바꾼다 (요청은 모두 가짜 서버가 받는다)
+BUNDLE = BUNDLE.replace('"YOUR_SUPABASE_URL"', '"https://test.supabase.co"').replace('"YOUR_SUPABASE_ANON_KEY"', '"test-anon-key"');
+const SITE = "https://naemom.netlify.app/";
+
+const mock = createMock();
+let pass = 0, fail = 0;
+const ok = (cond, msg) => { if (cond) { pass++; console.log("  ✔ " + msg); } else { fail++; console.log("  ✘ " + msg); } };
+
+function device(storage) {
+  const dom = new JSDOM(`<!DOCTYPE html><html><body><div class="shell" id="app"></div><div id="toast" hidden></div><div id="ov" hidden data-act="closeov"></div></body></html>`, {
+    url: SITE, runScripts: "outside-only", pretendToBeVisual: true,
+  });
+  const w = dom.window;
+  w.fetch = mock.fetch; w.Headers = Headers; w.Request = Request; w.Response = Response;
+  Object.defineProperty(w, "crypto", { value: require("crypto").webcrypto, configurable: true });
+  w.scrollTo = () => {};
+  // 사진 압축에 쓰는 브라우저 기능 흉내
+  w.URL.createObjectURL = () => "blob:mock"; w.URL.revokeObjectURL = () => {};
+  w.Image = class { set src(v) { this.naturalWidth = 3000; this.naturalHeight = 2000; setTimeout(() => this.onload && this.onload()); } };
+  w.HTMLCanvasElement.prototype.getContext = () => ({ drawImage() {} });
+  w.HTMLCanvasElement.prototype.toBlob = function (cb) { cb(new w.Blob([new Uint8Array(this.width * 10)], { type: "image/jpeg" })); };
+  if (storage) for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v);
+  const errs = [];
+  w.addEventListener("error", (e) => errs.push(e.message));
+  w.console.error = (...a) => errs.push(a.map((x) => (x && x.message) || String(x)).join(" "));
+  w.eval(BUNDLE);
+  return { w, errs };
+}
+
+const text = (w) => w.document.body.textContent;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(fn, label, ms = 4000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { try { const v = fn(); if (v) return v; } catch (e) {} await sleep(20); }
+  throw new Error("시간 초과: " + label);
+}
+const $ = (w, s) => w.document.querySelector(s);
+const $$ = (w, s) => [...w.document.querySelectorAll(s)];
+function byText(w, t, sel = "button") { return $$(w, sel).filter((e) => e.textContent.trim().includes(t)).pop(); }
+function click(w, el) { if (!el) throw new Error("요소 없음"); el.dispatchEvent(new w.MouseEvent("click", { bubbles: true })); }
+function change(w, el, v) { el.value = v; el.dispatchEvent(new w.Event("change", { bubbles: true })); }
+function check(w, el, v) { el.checked = v; el.dispatchEvent(new w.Event("change", { bubbles: true })); }
+function submit(w) { $(w, "#lgform").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true })); }
+const store = (w) => Object.fromEntries(Object.keys(w.localStorage).map((k) => [k, w.localStorage.getItem(k)]));
+const settle = () => sleep(60);
+const N = (w) => w.__naemom;
+const item = (w, name) => N(w).S.items.find((i) => i.name === name);
+const card = (w, name) => $$(w, "section.card").find((c) => c.querySelector("h3") && c.querySelector("h3").textContent.startsWith(name));
+const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+
+(async () => {
+  console.log("\n[기기 A — 첫 가입]");
+  const A = device();
+  await waitFor(() => $(A.w, "#lgform"), "로그인 화면");
+  ok(text(A.w).includes("아이디와 비밀번호로 로그인"), "처음에는 로그인 화면");
+  click(A.w, byText(A.w, "처음이라면 계정 만들기"));
+  await waitFor(() => $(A.w, "#lg-pw2"), "가입 화면");
+  $(A.w, "#lg-id").value = "AB"; $(A.w, "#lg-pw").value = "secret1"; $(A.w, "#lg-pw2").value = "secret1"; submit(A.w);
+  await waitFor(() => text(A.w).includes("3~20자입니다"), "아이디 규칙 오류");
+  ok(true, "잘못된 아이디는 거절");
+  $(A.w, "#lg-id").value = "hyokyung"; $(A.w, "#lg-pw").value = "secret1"; $(A.w, "#lg-pw2").value = "secret2"; submit(A.w);
+  await waitFor(() => text(A.w).includes("일치하지 않습니다"), "비밀번호 확인 오류");
+  ok(true, "비밀번호 확인 불일치는 거절");
+  $(A.w, "#lg-id").value = "Hyokyung"; $(A.w, "#lg-pw").value = "secret1"; $(A.w, "#lg-pw2").value = "secret1"; submit(A.w);
+  await waitFor(() => N(A.w).PHASE === "app", "가입 후 앱 진입");
+  ok(mock.users[0].email === "hyokyung@naemom.app", "아이디는 소문자로 바꿔 내부 이메일로 저장");
+  ok(mock.db.items.length === 8 && mock.db.item_options.length === 8, "기본 항목 8개와 선택지 8개 생성");
+  ok(["몸 상태", "체중", "운동", "요가", "간식", "삼시세끼", "배변", "기타 메모"].every((n) => text(A.w).includes(n)), "오늘 기록 화면에 기본 항목 표시");
+
+  console.log("\n[오늘 기록]");
+  const cond = item(A.w, "몸 상태");
+  click(A.w, $(A.w, `[data-act=pick][data-o="${cond.options[1].id}"]`)); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === cond.id && r.option_id === cond.options[1].id && r.date === TODAY), "몸 상태 2단계 저장");
+  const ex = item(A.w, "운동");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${ex.id}"][data-v="true"]`)); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === ex.id && r.value_bool === true), "운동 '예' 저장");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${ex.id}"][data-v="true"]`)); await settle();
+  ok(!mock.db.daily_records.some((r) => r.item_id === ex.id), "같은 버튼을 다시 누르면 기록 삭제");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${ex.id}"][data-v="true"]`)); await settle();
+  const wt = item(A.w, "체중");
+  change(A.w, $(A.w, `#n-${wt.id}`), "61.54"); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === wt.id && r.value_num === 61.5), "체중은 소수 첫째 자리로 저장");
+  const bw = item(A.w, "배변");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${bw.id}"][data-v="true"]`)); await settle();
+  ok($$(A.w, `[data-act=pick][data-i="${bw.id}"]`).length === 3, "배변 '있음'을 고르면 상태 선택지 3개 표시");
+  click(A.w, $(A.w, `[data-act=pick][data-o="${bw.options[1].id}"]`)); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === bw.id && r.value_bool === true && r.option_id === bw.options[1].id), "배변 있음 + 정상 저장");
+  const memo = item(A.w, "기타 메모");
+  change(A.w, $(A.w, `#t-${memo.id}`), "오후에 두통"); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === memo.id && r.value_text === "오후에 두통"), "메모 저장");
+  change(A.w, $(A.w, "#m-l"), "비빔밥"); await settle();
+  ok(mock.db.meals.some((m) => m.meal_type === "lunch" && m.note === "비빔밥"), "점심 메모 저장");
+
+  console.log("\n[사진]");
+  const fin = $(A.w, "#p-l");
+  Object.defineProperty(fin, "files", { value: [new A.w.File(["x"], "lunch.jpg", { type: "image/jpeg" })] });
+  fin.dispatchEvent(new A.w.Event("change", { bubbles: true }));
+  await waitFor(() => Object.keys(mock.objects).length === 2 && mock.db.meals.find((m) => m.meal_type === "lunch").photo_path, "사진 업로드");
+  const lunch = mock.db.meals.find((m) => m.meal_type === "lunch");
+  ok(lunch.photo_path.startsWith(mock.users[0].id + "/" + TODAY + "/l-") && lunch.thumb_path.endsWith("-t.jpg"), "원본과 썸네일을 사용자 폴더에 저장");
+  ok(lunch.note === "비빔밥", "사진을 올려도 점심 메모 유지");
+  await waitFor(() => $(A.w, "img.thumb"), "썸네일 표시");
+  ok($(A.w, "img.thumb").src.includes("/object/sign/meal-photos/"), "썸네일은 서명 주소로 표시");
+  await waitFor(() => text(A.w).includes("KB로 압축"), "압축 크기 안내");
+  ok(true, "업로드 후 압축 크기 안내");
+  click(A.w, $(A.w, "img.thumb"));
+  await waitFor(() => $(A.w, "#ov img"), "사진 크게 보기");
+  ok(!$(A.w, "#ov").hidden, "썸네일을 누르면 사진을 크게 표시");
+  click(A.w, $(A.w, "#ov"));
+  click(A.w, $(A.w, '[data-act=photodel][data-k="l"]'));
+  await waitFor(() => Object.keys(mock.objects).length === 0, "사진 삭제");
+  const lunch2 = mock.db.meals.find((m) => m.meal_type === "lunch");
+  ok(lunch2 && !lunch2.photo_path && lunch2.note === "비빔밥", "사진 삭제 시 저장소 파일도 삭제, 메모는 유지");
+
+  console.log("\n[약/영양제]");
+  click(A.w, byText(A.w, "약/영양제", ".tab"));
+  await waitFor(() => $(A.w, "#ma-supplement-n"), "약/영양제 화면");
+  $(A.w, "#ma-supplement-n").value = "비타민D"; click(A.w, $(A.w, '[data-act=medadd][data-k="supplement"]')); await settle();
+  $(A.w, "#ma-regular-n").value = "비염약"; $(A.w, "#ma-regular-note").value = "아침 1정"; click(A.w, $(A.w, '[data-act=medadd][data-k="regular"]')); await settle();
+  ok(mock.db.medications.length === 2 && mock.db.medications.some((m) => m.kind === "supplement" && m.start_date === TODAY && m.end_date === null), "영양제와 정기 복용 약 등록");
+  ok(byText(A.w, "오늘로 복용 종료"), "복용 중 상태와 종료 버튼 표시");
+  $(A.w, "#ma-regular-n").value = "잘못된약"; $(A.w, "#ma-regular-s").value = TODAY; $(A.w, "#ma-regular-e").value = "2000-01-01";
+  click(A.w, $(A.w, '[data-act=medadd][data-k="regular"]')); await settle();
+  ok(mock.db.medications.length === 2 && text(A.w).includes("종료일이 시작일보다 빠릅니다"), "종료일이 시작일보다 빠르면 등록하지 않음");
+  click(A.w, byText(A.w, "오늘 기록", ".tab"));
+  await waitFor(() => text(A.w).includes("비타민D"), "오늘 화면의 영양제");
+  const vd = mock.db.medications.find((m) => m.name === "비타민D");
+  check(A.w, $(A.w, `#s-${vd.id}`), true); await settle();
+  ok(mock.db.supplement_logs.length === 1, "영양제 체크 저장");
+  check(A.w, $(A.w, `#s-${vd.id}`), false); await settle();
+  ok(mock.db.supplement_logs.length === 0, "체크 해제 시 삭제");
+  check(A.w, $(A.w, `#s-${vd.id}`), true); await settle();
+  ok(text(A.w).includes("비염약"), "정기 복용 약이 오늘 화면에 표시");
+  $(A.w, "#once-n").value = "진통제"; $(A.w, "#once-note").value = "1정"; click(A.w, $(A.w, "[data-act=onceadd]")); await settle();
+  ok(mock.db.onetime_meds.length === 1 && mock.db.onetime_meds[0].name === "진통제", "일회성 약 기입");
+  $(A.w, "#once-n").value = "소화제"; click(A.w, $(A.w, "[data-act=onceadd]")); await settle();
+  click(A.w, $$(A.w, "[data-act=oncedel]").pop()); await settle();
+  ok(mock.db.onetime_meds.length === 1, "일회성 약 삭제");
+
+  console.log("\n[항목 설정]");
+  click(A.w, $(A.w, '[data-act=nav][data-v="set"]'));
+  await waitFor(() => $(A.w, "#ni-name"), "설정 화면");
+  $(A.w, "#ni-name").value = "수면 시간"; change(A.w, $(A.w, "#ni-type"), "number");
+  await waitFor(() => $(A.w, "#ni-unit"), "단위 입력칸");
+  ok($(A.w, "#ni-name").value === "수면 시간", "유형을 바꿔도 입력한 이름 유지");
+  $(A.w, "#ni-unit").value = "시간"; click(A.w, $(A.w, "[data-act=iadd]")); await settle(); await settle();
+  ok(mock.db.items.some((i) => i.name === "수면 시간" && i.type === "number" && i.unit === "시간" && i.sort_order === 8), "숫자형 항목 추가");
+  $(A.w, "#ni-name").value = "기분"; change(A.w, $(A.w, "#ni-type"), "scale");
+  $(A.w, "#ni-opts").value = "나쁨, 보통, 좋음"; click(A.w, $(A.w, "[data-act=iadd]")); await settle(); await settle();
+  const mood = mock.db.items.find((i) => i.name === "기분");
+  ok(mood && mock.db.item_options.filter((o) => o.item_id === mood.id).length === 3, "단계형 항목과 선택지 3개 추가");
+  const yoga = item(A.w, "요가");
+  click(A.w, $(A.w, `[data-act=ihide][data-i="${yoga.id}"]`)); await settle();
+  ok(mock.db.items.find((i) => i.id === yoga.id).is_hidden === true, "요가 숨김 저장");
+  click(A.w, $(A.w, `[data-act=imove][data-i="${wt.id}"][data-n="1"]`)); await settle();
+  const so = (n) => mock.db.items.find((i) => i.name === n).sort_order;
+  ok(so("운동") === 1 && so("체중") === 2, "항목 순서 변경 저장");
+  click(A.w, $(A.w, `[data-act=iopen][data-i="${bw.id}"]`));
+  await waitFor(() => $(A.w, `#on-${bw.id}`), "선택지 편집");
+  $(A.w, `#on-${bw.id}`).value = "설사"; click(A.w, $(A.w, `[data-act=oadd][data-i="${bw.id}"]`)); await settle();
+  ok(mock.db.item_options.some((o) => o.item_id === bw.id && o.label === "설사" && o.sort_order === 3), "선택지 추가");
+  change(A.w, $(A.w, `#ol-${bw.options[0].id}`), "무름"); await settle();
+  ok(mock.db.item_options.find((o) => o.id === bw.options[0].id).label === "무름", "선택지 이름 변경");
+  click(A.w, byText(A.w, "오늘 기록", ".tab"));
+  await waitFor(() => text(A.w).includes("수면 시간"), "새 항목 표시");
+  ok(!$(A.w, `[data-i="${yoga.id}"]`), "숨긴 요가는 오늘 기록에서 빠짐");
+
+  console.log("\n[캘린더 / 모아보기]");
+  click(A.w, byText(A.w, "캘린더", ".tab"));
+  await waitFor(() => $(A.w, ".cal"), "캘린더");
+  const todayCell = $(A.w, `.cell[data-d="${TODAY}"]`);
+  ok(todayCell && todayCell.querySelector(".lvc.lv2") && todayCell.querySelector(".lvc").textContent === "2", "오늘 칸에 몸 상태 2단계 원 표시");
+  ok(todayCell.textContent.includes("영양 1/1"), "영양제 복용 현황 표시 (기본 필터)");
+  ok(!$$(A.w, "[data-act=calf]").some((b) => b.textContent.includes("요가")), "숨긴 항목은 필터에 없음");
+  click(A.w, $(A.w, `[data-act=calf][data-k="${ex.id}"]`));
+  await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"] .tg.solid`), "운동 표시");
+  ok($(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("운동"), "필터에 운동을 추가하면 오늘 칸에 운동 표시");
+  click(A.w, $(A.w, `[data-act=lvgo][data-n="2"]`));
+  await waitFor(() => text(A.w).includes("몸 상태 모아보기"), "모아보기");
+  ok($$(A.w, ".dayrow").length === 1 && $(A.w, ".dayrow").textContent.includes("두통"), "2단계로 기록한 오늘과 그날 메모 표시");
+  click(A.w, $(A.w, '[data-act=lvsel][data-n="5"]'));
+  await waitFor(() => text(A.w).includes("5단계로 기록한 날이 아직 없습니다"), "5단계 비어 있음");
+  ok(true, "단계 전환");
+  click(A.w, $(A.w, '[data-act=lvsel][data-n="2"]'));
+  click(A.w, $(A.w, ".dayrow"));
+  await waitFor(() => text(A.w).includes("오늘") && $(A.w, "#once-n"), "그날 기록으로 이동");
+  ok(true, "모아보기에서 날짜를 누르면 그날 기록 화면");
+
+  console.log("\n[리포트]");
+  click(A.w, byText(A.w, "리포트", ".tab"));
+  for (const [k, l] of [["week", "주간"], ["month", "월간"], ["year", "연간"]]) {
+    click(A.w, $(A.w, `[data-act=repmode][data-k="${k}"]`));
+    await settle();
+    ok(text(A.w).includes("몸 상태") && text(A.w).includes("비타민D") && $(A.w, "svg.chart"), `${l} 리포트 표시`);
+  }
+  ok(text(A.w).includes("진통제") && text(A.w).includes("1회"), "연간 리포트는 일회성 약을 횟수로 묶음");
+  click(A.w, $(A.w, '[data-act=repshift][data-n="-1"]')); await settle();
+  ok(text(A.w).includes(`${+TODAY.slice(0, 4) - 1}년`), "이전 해로 이동");
+
+  console.log("\n[기기 B — 같은 브라우저 다시 열기]");
+  const saved = store(A.w);
+  const B = device(saved);
+  await waitFor(() => N(B.w) && N(B.w).PHASE === "app", "자동 로그인");
+  ok(true, "로그인 상태 유지");
+  const SB = N(B.w).S, SA = N(A.w).S;
+  const norm = (r) => JSON.stringify(Object.keys(r).sort().map((d) => [d, Object.keys(r[d]).sort().map((k) => [k, r[d][k]])]));
+  if (norm(SB.rec) !== norm(SA.rec)) console.log(norm(SA.rec), "\n", norm(SB.rec));
+  ok(norm(SB.rec) === norm(SA.rec), "날짜별 기록이 DB에서 그대로 복원");
+  ok(JSON.stringify(SB.items) === JSON.stringify(SA.items), "항목/선택지/순서/숨김이 그대로 복원");
+  const byId = (a) => JSON.stringify(a.slice().sort((x, y) => (x.id < y.id ? -1 : 1)));
+  ok(byId(SB.meds) === byId(SA.meds) && JSON.stringify(SB.sup) === JSON.stringify(SA.sup) && JSON.stringify(SB.once) === JSON.stringify(SA.once), "약/영양제 기록이 그대로 복원");
+  ok(SB.meal[TODAY].l.t === "비빔밥" && !SB.meal[TODAY].l.p, "식사 기록 복원");
+
+  console.log("\n[로그아웃 / 로그인]");
+  click(B.w, $(B.w, '[data-act=nav][data-v="set"]'));
+  click(B.w, await waitFor(() => byText(B.w, "로그아웃"), "로그아웃 버튼"));
+  await waitFor(() => $(B.w, "#lgform"), "로그인 화면");
+  ok(!Object.keys(B.w.localStorage).some((k) => k === "naemom-auth" && B.w.localStorage.getItem(k)), "로그아웃하면 로그인 정보 삭제");
+  $(B.w, "#lg-id").value = "hyokyung"; $(B.w, "#lg-pw").value = "wrong1"; submit(B.w);
+  await waitFor(() => text(B.w).includes("맞지 않습니다"), "비밀번호 오류");
+  ok($(B.w, "#lg-id").value === "hyokyung", "오류가 나도 아이디 입력 유지");
+  $(B.w, "#lg-pw").value = "secret1"; submit(B.w);
+  await waitFor(() => N(B.w).PHASE === "app", "다시 로그인");
+  ok(N(B.w).S.items.length === 10, "다시 로그인하면 기록 그대로");
+
+  console.log("\n[다른 사용자 — 권한 분리]");
+  const C = device();
+  await waitFor(() => $(C.w, "#lgform"), "로그인 화면");
+  click(C.w, byText(C.w, "처음이라면 계정 만들기"));
+  await waitFor(() => $(C.w, "#lg-pw2"), "가입 화면");
+  $(C.w, "#lg-id").value = "hyokyung"; $(C.w, "#lg-pw").value = "secret1"; $(C.w, "#lg-pw2").value = "secret1"; submit(C.w);
+  await waitFor(() => text(C.w).includes("이미 사용 중인 아이디"), "중복 아이디");
+  ok(true, "같은 아이디로는 가입 불가");
+  $(C.w, "#lg-id").value = "other"; $(C.w, "#lg-pw").value = "secret1"; $(C.w, "#lg-pw2").value = "secret1"; submit(C.w);
+  await waitFor(() => N(C.w).PHASE === "app", "다른 사용자 진입");
+  ok(N(C.w).S.items.length === 8 && Object.keys(N(C.w).S.rec).length === 0 && N(C.w).S.meds.length === 0, "다른 사용자에게는 내 기록이 보이지 않음");
+  mock.signupOpen.value = false;
+  const D = device();
+  await waitFor(() => $(D.w, "#lgform"), "로그인 화면");
+  click(D.w, byText(D.w, "처음이라면 계정 만들기"));
+  await waitFor(() => $(D.w, "#lg-pw2"), "가입 화면");
+  $(D.w, "#lg-id").value = "stranger"; $(D.w, "#lg-pw").value = "secret1"; $(D.w, "#lg-pw2").value = "secret1"; submit(D.w);
+  await waitFor(() => text(D.w).includes("새 계정 만들기가 막혀 있습니다"), "가입 차단");
+  ok(true, "Supabase에서 가입을 막으면 새 계정을 만들 수 없음");
+
+  const errs = [...A.errs, ...B.errs, ...C.errs, ...D.errs];
+  ok(errs.length === 0, "브라우저 오류 없음" + (errs.length ? ": " + errs.slice(0, 3).join(" | ") : ""));
+  console.log(`\n통과 ${pass} / 실패 ${fail}`);
+  process.exit(fail ? 1 : 0);
+})().catch((e) => { console.error("\n중단:", e.message); console.log(`통과 ${pass} / 실패 ${fail + 1}`); process.exit(1); });

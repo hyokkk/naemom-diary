@@ -1,0 +1,142 @@
+-- ============================================================
+-- 내몸일기 — Supabase 설정 (처음 설치용)
+--
+-- ⚠ 이 스크립트는 기존 테이블을 모두 지우고 새로 만든다.
+--   이미 쓰고 있는 DB에는 실행하지 말 것. 데이터가 전부 삭제된다.
+--   이미 설치된 DB를 올릴 때는 migration_*.sql 을 쓴다.
+--
+-- Supabase 대시보드 > SQL Editor > New query 에 붙여넣고 Run
+-- ============================================================
+
+drop table if exists onetime_meds     cascade;
+drop table if exists supplement_logs  cascade;
+drop table if exists medications      cascade;
+drop table if exists meals            cascade;
+drop table if exists daily_records    cascade;
+drop table if exists item_options     cascade;
+drop table if exists items            cascade;
+
+
+-- 1) 기록 항목 ---------------------------------------------
+-- type: scale(단계형) / choice(선택형) / number(숫자) / bool(예/아니오) / meal(식사) / text(텍스트)
+-- 삭제 대신 is_hidden 으로 숨긴다. 지난 기록은 남는다.
+create table items (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name        text not null,
+  type        text not null check (type in ('scale','choice','number','bool','meal','text')),
+  unit        text,
+  sort_order  int  not null default 0,
+  is_hidden   boolean not null default false,
+  created_at  timestamptz not null default now()
+);
+create index items_user_idx on items (user_id);
+
+-- 2) 단계형/선택형 선택지 ------------------------------------
+-- 단계형의 단계 값은 sort_order 순서(위에서부터 1, 2, 3…)로 계산한다.
+create table item_options (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  item_id     uuid not null references items(id) on delete cascade,
+  label       text not null,
+  sort_order  int  not null default 0,
+  is_hidden   boolean not null default false
+);
+create index item_options_user_idx on item_options (user_id);
+
+-- 3) 날짜별 기록 (항목당 하루 1건) ----------------------------
+create table daily_records (
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date        date not null,
+  item_id     uuid not null references items(id) on delete cascade,
+  value_num   numeric,
+  value_bool  boolean,
+  value_text  text,
+  option_id   uuid references item_options(id) on delete set null,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, date, item_id)
+);
+
+-- 4) 끼니 기록 ----------------------------------------------
+-- 사진은 Storage 버킷 meal-photos 에 두고 경로만 저장한다.
+create table meals (
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date        date not null,
+  meal_type   text not null check (meal_type in ('breakfast','lunch','dinner')),
+  note        text,
+  photo_path  text,
+  thumb_path  text,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, date, meal_type)
+);
+
+-- 5) 정기 복용 약 / 영양제 -----------------------------------
+-- end_date 가 비어 있으면 계속 복용 중
+create table medications (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  kind        text not null check (kind in ('regular','supplement')),
+  name        text not null,
+  start_date  date not null,
+  end_date    date,
+  note        text,
+  created_at  timestamptz not null default now(),
+  check (end_date is null or end_date >= start_date)
+);
+create index medications_user_idx on medications (user_id);
+
+-- 6) 영양제 복용 체크 (행이 있으면 복용) ------------------------
+create table supplement_logs (
+  user_id        uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date           date not null,
+  medication_id  uuid not null references medications(id) on delete cascade,
+  primary key (user_id, date, medication_id)
+);
+
+-- 7) 일회성 복용 약 ------------------------------------------
+create table onetime_meds (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date        date not null,
+  name        text not null,
+  note        text,
+  created_at  timestamptz not null default now()
+);
+create index onetime_meds_user_idx on onetime_meds (user_id, date);
+
+
+-- 8) 권한: 로그인한 본인 행만 읽고 쓴다 ------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds'] loop
+    execute format('alter table %I enable row level security', t);
+    execute format('drop policy if exists own_rows on %I', t);
+    execute format(
+      'create policy own_rows on %I for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid())', t);
+    execute format('revoke all on %I from anon', t);
+    execute format('grant select, insert, update, delete on %I to authenticated', t);
+  end loop;
+end $$;
+
+
+-- 9) 사진 버킷 (비공개) ---------------------------------------
+-- 경로 규칙: <사용자 ID>/<날짜>/<끼니>-<시각>.jpg
+-- 첫 폴더 이름이 본인 ID인 파일만 읽고 쓸 수 있다.
+insert into storage.buckets (id, name, public)
+values ('meal-photos', 'meal-photos', false)
+on conflict (id) do nothing;
+
+drop policy if exists meal_photos_select on storage.objects;
+drop policy if exists meal_photos_insert on storage.objects;
+drop policy if exists meal_photos_update on storage.objects;
+drop policy if exists meal_photos_delete on storage.objects;
+
+create policy meal_photos_select on storage.objects for select to authenticated
+  using (bucket_id = 'meal-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy meal_photos_insert on storage.objects for insert to authenticated
+  with check (bucket_id = 'meal-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy meal_photos_update on storage.objects for update to authenticated
+  using (bucket_id = 'meal-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy meal_photos_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'meal-photos' and (storage.foldername(name))[1] = auth.uid()::text);

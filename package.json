@@ -1,0 +1,17 @@
+{
+  "name": "naemom",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs --dev && node test/e2e.cjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.116.0",
+    "jsdom": "^24.1.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
