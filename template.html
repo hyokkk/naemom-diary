@@ -182,6 +182,39 @@ textarea{min-height:72px;resize:vertical}
 .symset + .symset{margin-top:6px}
 .symset > strong{font-size:13px}
 .boolrow{align-items:center}
+/* 리포트: 한 줄 막대 */
+.crow{display:grid;grid-template-columns:92px minmax(0,1fr) 64px;gap:8px;align-items:center;font-size:13px;min-height:24px}
+.crow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crow .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px}
+.sub{font-size:11px;color:var(--muted);margin:-2px 0 4px 100px;line-height:1.35}
+.ctl{font-size:12px;color:var(--muted);margin:10px 0 4px;font-weight:600}
+.cl{font-size:13px;padding:4px 0;border-top:1px solid var(--line)}
+.cl:first-child{border-top:0}
+.micro{width:100%;height:18px;display:block}
+.micro rect{fill:var(--accent)}
+.micro line{stroke:var(--line)}
+.card h3 small b{color:var(--ink);font-weight:600}
+/* 조회 모드 */
+.dact{justify-content:space-between;margin-bottom:10px}
+.dview{padding:4px 14px}
+.dr{display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px;align-items:start}
+.dr:last-of-type{border-bottom:0}
+.dl{color:var(--muted);font-size:12px;padding-top:2px}
+.dv{min-width:0;overflow-wrap:anywhere}
+.dv .lvc{width:20px;height:20px;font-size:11px;vertical-align:-4px;margin-right:4px}
+.mth{width:28px;height:28px;border-radius:6px;object-fit:cover;vertical-align:middle;margin-left:6px;cursor:zoom-in;border:1px solid var(--line)}
+.ok{color:var(--accent);font-weight:500}
+.dmiss{margin:8px 0 6px}
+.regx{padding:2px 0}
+/* 약/영양제 탭 */
+.mnote{display:flex;flex-direction:column;gap:3px}
+.mnote textarea{min-height:0;height:auto;padding:6px 10px;font-size:16px;line-height:1.4;resize:vertical}
+.endtg{margin-top:10px}
+.endl{display:flex;flex-direction:column;margin-top:6px;border-top:1px dashed var(--line)}
+.endr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.endr strong{color:var(--ink);font-weight:500;font-size:13px}
+.endr .nt{grid-column:1/-1;overflow-wrap:anywhere}
+.vcopy{display:flex;flex-direction:column;gap:4px;padding-top:8px;border-top:1px dashed var(--line)}
 .boolrow .bnote{flex:1 1 140px;width:auto;min-width:0;padding:6px 10px}
 .oncex{display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid var(--line)}
 .oncex .eff{display:grid;grid-template-columns:34px minmax(0,1fr);gap:6px;align-items:center;font-size:12px;color:var(--muted)}

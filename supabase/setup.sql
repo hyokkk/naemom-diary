@@ -8,6 +8,7 @@
 -- Supabase 대시보드 > SQL Editor > New query 에 붙여넣고 Run
 -- ============================================================
 
+drop table if exists regular_med_logs cascade;
 drop table if exists hospital_visits  cascade;
 drop table if exists symptom_records  cascade;
 drop table if exists symptom_options  cascade;
@@ -33,6 +34,7 @@ create table items (
   sort_order  int  not null default 0,
   is_hidden   boolean not null default false,
   has_note    boolean not null default false,  -- 예/아니오 항목: '예'일 때 내용 칸 표시 (내용은 daily_records.value_text)
+  high_is_bad boolean not null default false,  -- 단계형 항목: 숫자가 높을수록 나쁜 상태 (몸 상태는 true)
   created_at  timestamptz not null default now()
 );
 create index items_user_idx on items (user_id);
@@ -157,11 +159,36 @@ create table hospital_visits (
 );
 
 
--- 10) 권한: 로그인한 본인 행만 읽고 쓴다 ------------------------
+-- 10) 정기 복용 약의 날짜별 복용 체크 (v1.4) — 행이 있으면 복용, effect 는 차도 ----
+create table regular_med_logs (
+  user_id        uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date           date not null,
+  medication_id  uuid not null references medications(id) on delete cascade,
+  effect         text,
+  updated_at     timestamptz not null default now(),
+  primary key (user_id, date, medication_id)
+);
+
+
+-- 11) 권한: 로그인한 본인 행만 읽고 쓴다
+-- (Supabase 검사기가 반복문 안을 읽지 못해 RLS 경고를 띄우므로, 켜는 문장은 따로 적어 둔다)
+alter table items enable row level security;
+alter table item_options enable row level security;
+alter table daily_records enable row level security;
+alter table meals enable row level security;
+alter table medications enable row level security;
+alter table supplement_logs enable row level security;
+alter table onetime_meds enable row level security;
+alter table symptoms enable row level security;
+alter table symptom_options enable row level security;
+alter table symptom_records enable row level security;
+alter table hospital_visits enable row level security;
+alter table regular_med_logs enable row level security;
+ ------------------------
 do $$
 declare t text;
 begin
-  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits'] loop
+  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits','regular_med_logs'] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists own_rows on %I', t);
     execute format(
@@ -172,7 +199,7 @@ begin
 end $$;
 
 
--- 11) 사진 버킷 (비공개) ---------------------------------------
+-- 12) 사진 버킷 (비공개) ---------------------------------------
 -- 경로 규칙: <사용자 ID>/<날짜>/<끼니>-<시각>.jpg
 -- 첫 폴더 이름이 본인 ID인 파일만 읽고 쓸 수 있다.
 insert into storage.buckets (id, name, public)

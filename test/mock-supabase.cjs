@@ -15,11 +15,12 @@ const TABLES = {
   symptom_options: (r) => r.id,
   symptom_records: (r) => `${r.user_id}|${r.date}|${r.symptom_id}`,
   hospital_visits: (r) => `${r.user_id}|${r.date}`,
+  regular_med_logs: (r) => `${r.user_id}|${r.date}|${r.medication_id}`,
 };
 const NOT_NULL = {
   items: ["name", "type"], item_options: ["item_id", "label"], daily_records: ["date", "item_id"],
   meals: ["date", "meal_type"], medications: ["kind", "name", "start_date"], supplement_logs: ["date", "medication_id"], onetime_meds: ["date", "name"],
-  symptoms: ["item_id", "name"], symptom_options: ["symptom_id", "label"], symptom_records: ["date", "symptom_id"], hospital_visits: ["date"],
+  symptoms: ["item_id", "name"], symptom_options: ["symptom_id", "label"], symptom_records: ["date", "symptom_id"], hospital_visits: ["date"], regular_med_logs: ["date", "medication_id"],
 };
 
 function createMock() {
@@ -123,7 +124,7 @@ function createMock() {
       const del = db[table].filter((r) => mine(r) && match(r));
       db[table] = db[table].filter((r) => !(mine(r) && match(r)));
       // on delete cascade
-      if (table === "medications") for (const m of del) db.supplement_logs = db.supplement_logs.filter((l) => l.medication_id !== m.id);
+      if (table === "medications") for (const m of del) { db.supplement_logs = db.supplement_logs.filter((l) => l.medication_id !== m.id); db.regular_med_logs = db.regular_med_logs.filter((l) => l.medication_id !== m.id); }
       void before;
       return json(204, undefined);
     }
