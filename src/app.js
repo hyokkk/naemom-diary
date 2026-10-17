@@ -9,8 +9,9 @@ import { createClient } from "@supabase/supabase-js";
    anon key는 브라우저에 공개되는 값이다. 데이터는 RLS로 본인 행만 접근된다.
    service_role 키는 절대로 여기에 넣지 않는다.
 ------------------------------------------- */
-const SUPABASE_URL = "YOUR_SUPABASE_URL";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+const SUPABASE_URL = "https://leuobolisgxhlccmdnvd.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxldW9ib2xpc2d4aGxjY21kbnZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyMTMwNzQsImV4cCI6MjEwNzc4OTA3NH0.oGbMXkdYyv8givyWb9Z9o5MOdtv2MsasnZYlXd-LGkQ";
 
 /* 아이디를 Supabase 인증용 이메일로 바꿀 때 붙이는 도메인. 실제로 메일을 보내지 않는다.
    이미 만든 계정이 있으면 바꾸지 않는다. 바꾸면 기존 아이디로 로그인할 수 없다. */
