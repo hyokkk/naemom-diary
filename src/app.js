@@ -108,7 +108,7 @@ const DEFAULT_ITEMS = [
   ["체중", "number", "kg"],
   ["운동", "bool"],
   ["요가", "bool"],
-  ["간식", "bool"],
+  ["간식", "bool", null, null, true], // 마지막 true: '예'를 고르면 어떤 간식인지 적는 칸을 보여 준다
   ["삼시세끼", "meal"],
   ["배변", "choice", null, ["묽음", "정상", "단단함"]],
   ["기타 메모", "text"],
@@ -130,9 +130,9 @@ async function createSymptomDefaults(itemId) {
 }
 async function createDefaults() {
   const items = [], opts = [];
-  DEFAULT_ITEMS.forEach(([name, type, unit, options], i) => {
+  DEFAULT_ITEMS.forEach(([name, type, unit, options, hasNote], i) => {
     const id = uuid();
-    items.push({ id, user_id: USER.id, name, type, unit: unit || null, sort_order: i, is_hidden: false });
+    items.push({ id, user_id: USER.id, name, type, unit: unit || null, sort_order: i, is_hidden: false, has_note: !!hasNote });
     (options || []).forEach((label, j) => opts.push({ id: uuid(), user_id: USER.id, item_id: id, label, sort_order: j, is_hidden: false }));
   });
   let r = await sb.from("items").insert(items);
@@ -165,7 +165,7 @@ async function loadAll() {
   const s = emptyState();
   s.items = items
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((r) => ({ id: r.id, name: r.name, type: r.type, unit: r.unit || "", hidden: r.is_hidden, options: [], symptoms: [] }));
+    .map((r) => ({ id: r.id, name: r.name, type: r.type, unit: r.unit || "", hidden: r.is_hidden, note: !!r.has_note, options: [], symptoms: [] }));
   for (const o of opts.sort((a, b) => a.sort_order - b.sort_order)) {
     const it = s.items.find((x) => x.id === o.item_id);
     if (it) it.options.push({ id: o.id, label: o.label, hidden: o.is_hidden });
@@ -185,7 +185,7 @@ async function loadAll() {
     if (it.type === "scale") v = r.option_id ? { o: r.option_id } : null;
     else if (it.type === "choice") v = r.value_bool == null ? null : { v: r.value_bool, o: r.value_bool ? r.option_id || undefined : undefined };
     else if (it.type === "number") v = r.value_num == null ? null : { v: Number(r.value_num) };
-    else if (it.type === "bool") v = r.value_bool == null ? null : { v: r.value_bool };
+    else if (it.type === "bool") v = r.value_bool == null ? null : r.value_bool && r.value_text ? { v: true, t: r.value_text } : { v: r.value_bool };
     else if (it.type === "text") v = r.value_text ? { v: r.value_text } : null;
     if (v) (s.rec[r.date] = s.rec[r.date] || {})[r.item_id] = v;
   }
@@ -232,7 +232,7 @@ function recRow(it, d, val) {
   if (it.type === "scale") row.option_id = val.o;
   else if (it.type === "choice") { row.value_bool = val.v; row.option_id = val.v && val.o ? val.o : null; }
   else if (it.type === "number") row.value_num = val.v;
-  else if (it.type === "bool") row.value_bool = val.v;
+  else if (it.type === "bool") { row.value_bool = val.v; row.value_text = val.v && val.t ? val.t : null; }
   else if (it.type === "text") row.value_text = val.v;
   return row;
 }
@@ -383,7 +383,8 @@ function itemCard(it, d, r) {
     body = `<div class="numin"><input type="number" inputmode="decimal" step="0.1" id="n-${it.id}" data-ch="num" data-i="${it.id}" value="${r ? r.v : ""}" placeholder="0.0"><span class="muted">${esc(it.unit || "")}</span></div>`;
   } else if (it.type === "bool" || it.type === "choice") {
     const L = it.type === "bool" ? ["예", "아니오"] : ["있음", "없음"];
-    body = `<div class="seg">${[[true, L[0]], [false, L[1]]].map(([v, l]) => `<button class="chip${r && r.v === v ? " on" : ""}" data-act="bool" data-i="${it.id}" data-v="${v}">${l}</button>`).join("")}</div>`;
+    const withNote = it.type === "bool" && it.note && r && r.v;
+    body = `<div class="seg boolrow">${[[true, L[0]], [false, L[1]]].map(([v, l]) => `<button class="chip${r && r.v === v ? " on" : ""}" data-act="bool" data-i="${it.id}" data-v="${v}">${l}</button>`).join("")}${withNote ? `<input type="text" class="bnote" id="bn-${it.id}" data-ch="bnote" data-i="${it.id}" value="${esc(r.t || "")}" placeholder="어떤 ${esc(it.name)}이었나요?">` : ""}</div>`;
     if (it.type === "choice" && r && r.v) body += `<div class="seg" style="margin-top:8px">${it.options.filter((x) => !x.hidden || x.id === r.o).map((x) => `<button class="chip sm${r.o === x.id ? " on" : ""}" data-act="pick" data-i="${it.id}" data-o="${x.id}">${esc(x.label)}</button>`).join("")}</div>`;
   } else if (it.type === "meal") {
     const m = S.meal[d] || {};
@@ -490,7 +491,7 @@ function calTag(k, d) {
   const r = recOf(d, k); if (r == null) return "";
   const sh = esc(it.name.slice(0, 2));
   if (it.type === "number") return T(`${r.v}${esc(it.unit || "")}`);
-  if (it.type === "bool") return r.v ? T(sh, "solid") : "";
+  if (it.type === "bool") return r.v ? T(it.note && r.t ? `${sh} ${esc(r.t)}` : sh, "solid") : "";
   if (it.type === "choice") { if (!r.v) return ""; const op = it.options.find((x) => x.id === r.o); return T(`${sh}${op ? " " + esc(op.label) : ""}`, "solid"); }
   if (it.type === "text") return r.v ? T("메모") : "";
   return "";
@@ -535,7 +536,7 @@ function dayRow(d, base) {
     if (x == null) continue;
     if (it.type === "scale") { const s = score(it, x); if (s) tags.push(`<span class="tg c" style="--c:var(--lv${lvOf(it, s)});color:var(--ink)">${esc(it.name)} ${s}</span>`); }
     else if (it.type === "number") tags.push(T(`${esc(it.name)} ${x.v}${esc(it.unit || "")}`));
-    else if (it.type === "bool") { if (x.v) tags.push(T(esc(it.name), "solid")); }
+    else if (it.type === "bool") { if (x.v) tags.push(T(`${esc(it.name)}${x.t ? " " + esc(x.t) : ""}`, "solid")); }
     else if (it.type === "choice") { if (x.v) { const op = it.options.find((o) => o.id === x.o); tags.push(T(`${esc(it.name)} ${op ? esc(op.label) : "있음"}`, "solid")); } }
     else if (it.type === "text" && x.v) notes.push("메모: " + esc(x.v));
   }
@@ -575,6 +576,12 @@ function mChart(vals, lo, hi, bars) {
   const xl = vals.map((_, i) => `<text x="${X(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${i + 1}</text>`).join("");
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="월별 추이">${grid}${marks}${xl}</svg>`;
 }
+/* 예/아니오 항목에 적은 내용 중 자주 나온 것 (최대 5개) */
+function noteTop(rs) {
+  const c = {}; rs.forEach((r) => { if (r.v && r.t) c[r.t] = (c[r.t] || 0) + 1; });
+  const e = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  return e.length ? `<div class="small muted" style="margin-top:8px">자주 적은 내용: ${e.map(([k, n]) => `${esc(k)} ${n}회`).join(" / ")}</div>` : "";
+}
 const bar = (lab, num, den, txt) => `<div class="brow"><span>${esc(lab)}</span><div class="bar"><i style="width:${den ? Math.round((100 * num) / den) : 0}%"></i></div><span class="v">${txt ?? `${num}/${den}`}</span></div>`;
 const avg = (a) => (a.length ? a.reduce((x, z) => x + z, 0) / a.length : null);
 const signed = (d, u) => `${d > 0 ? "+" : d < 0 ? "−" : "±"}${Math.abs(d).toFixed(1)}${u}`;
@@ -611,7 +618,7 @@ function vRep() {
       } else h += `<section class="card"><h3>${esc(it.name)}${tag}</h3><p class="empty">이 기간에 기록이 없습니다.</p></section>`;
     } else if (it.type === "bool") {
       const rs = past.map((d) => recOf(d, it.id)).filter(Boolean), y = rs.filter((r) => r.v).length;
-      h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${rs.length}일 중</small></h3><div class="big">${y}<small>일</small></div><div style="margin-top:8px">${bar("달성률", y, rs.length, rs.length ? Math.round((100 * y) / rs.length) + "%" : "-")}</div></section>`;
+      h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${rs.length}일 중</small></h3><div class="big">${y}<small>일</small></div><div style="margin-top:8px">${bar("달성률", y, rs.length, rs.length ? Math.round((100 * y) / rs.length) + "%" : "-")}</div>${noteTop(rs)}</section>`;
     } else if (it.type === "choice") {
       const rs = past.map((d) => recOf(d, it.id)).filter(Boolean), yes = rs.filter((r) => r.v);
       h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${rs.length}일 중</small></h3><div class="big">${yes.length}<small>일 있음</small></div><div style="margin-top:10px">${it.options.map((x) => { const c = yes.filter((r) => r.o === x.id).length; return x.hidden && !c ? "" : bar(x.label, c, yes.length, `${c}일`); }).join("")}</div></section>`;
@@ -662,7 +669,7 @@ function vYear(past) {
       const mv = M.map((ds) => ds.filter((d) => { const r = recOf(d, it.id); return r && r.v; }).length), top = Math.max(4, Math.ceil(Math.max(...mv) / 4) * 4);
       h += `<section class="card"><h3><span>${esc(it.name)}${tag}</span><small>기록 ${rs.length}일 중 · 월별 일수</small></h3><div class="big">${yes.length}<small>일${it.type === "choice" ? " 있음" : ""}</small></div>${mChart(mv, 0, top, true)}`;
       if (it.type === "choice") h += `<div style="margin-top:8px">${it.options.map((x) => { const c = yes.filter((r) => r.o === x.id).length; return x.hidden && !c ? "" : bar(x.label, c, yes.length, `${c}일`); }).join("")}</div>`;
-      else h += `<div style="margin-top:8px">${bar("달성률", yes.length, rs.length, rs.length ? Math.round((100 * yes.length) / rs.length) + "%" : "-")}</div>`;
+      else h += `<div style="margin-top:8px">${bar("달성률", yes.length, rs.length, rs.length ? Math.round((100 * yes.length) / rs.length) + "%" : "-")}</div>${noteTop(rs)}`;
       h += "</section>";
     } else if (it.type === "meal") h += mealCard(it, tag, past);
   }
@@ -691,7 +698,7 @@ function vSet() {
     const hasOpt = it.type === "scale" || it.type === "choice", open = UI.open[it.id];
     h += `<div class="item${it.hidden ? " hid" : ""}"><div class="top"><input class="nm" type="text" id="in-${it.id}" data-ch="iname" data-i="${it.id}" value="${esc(it.name)}" aria-label="항목 이름">
    <div class="row"><button class="mini" data-act="imove" data-i="${it.id}" data-n="-1" ${i === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="imove" data-i="${it.id}" data-n="1" ${i === S.items.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="ihide" data-i="${it.id}">${it.hidden ? "다시 표시" : "숨기기"}</button></div></div>
-   <div class="row"><span class="pill">${TYPES[it.type]}${it.unit ? ` · ${esc(it.unit)}` : ""}</span>${it.hidden ? '<span class="pill warm">숨김</span>' : ""}${hasOpt ? `<button class="link" data-act="iopen" data-i="${it.id}">${open ? "선택지 접기" : `선택지 편집 (${it.options.filter((x) => !x.hidden).length}개)`}</button>` : ""}${it.symptoms && it.symptoms.length ? `<button class="link" data-act="symopen" data-i="${it.id}">${UI.open["sx" + it.id] ? "증상 선택지 접기" : "주요 증상 선택지 편집"}</button>` : ""}</div>`;
+   <div class="row"><span class="pill">${TYPES[it.type]}${it.unit ? ` · ${esc(it.unit)}` : ""}${it.type === "bool" && it.note ? " · 내용 칸" : ""}</span>${it.type === "bool" ? `<button class="link" data-act="inote" data-i="${it.id}">${it.note ? "내용 칸 끄기" : "내용 칸 켜기"}</button>` : ""}${it.hidden ? '<span class="pill warm">숨김</span>' : ""}${hasOpt ? `<button class="link" data-act="iopen" data-i="${it.id}">${open ? "선택지 접기" : `선택지 편집 (${it.options.filter((x) => !x.hidden).length}개)`}</button>` : ""}${it.symptoms && it.symptoms.length ? `<button class="link" data-act="symopen" data-i="${it.id}">${UI.open["sx" + it.id] ? "증상 선택지 접기" : "주요 증상 선택지 편집"}</button>` : ""}</div>`;
     if (it.symptoms && it.symptoms.length && UI.open["sx" + it.id]) {
       h += `<div class="opts"><p class="small muted" style="margin:0">증상마다 고를 수 있는 선택지입니다. 숨긴 선택지는 기록 화면에서 빠지고, 지난 기록에는 남습니다.</p>${it.symptoms.map((y) => `<div class="symset"><strong>${esc(y.name)}</strong>${y.options.map((x, j) => `<div class="opt${x.hidden ? " hid" : ""}"><span class="small muted">·</span><input type="text" id="sl-${x.id}" data-ch="solabel" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" value="${esc(x.label)}" aria-label="${esc(y.name)} 선택지 이름"><div class="row"><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="-1" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="1" ${j === y.options.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="sohide" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}">${x.hidden ? "표시" : "숨김"}</button></div></div>`).join("")}<div class="grid2" style="grid-template-columns:minmax(0,1fr) auto;margin-top:0"><input type="text" id="so-${y.id}" placeholder="${esc(y.name)} 새 선택지"><button class="btn sm" data-act="soadd" data-i="${it.id}" data-s="${y.id}">추가</button></div></div>`).join("")}</div>`;
     }
@@ -740,7 +747,16 @@ const act = {
     const o = { id: uuid(), label: v, hidden: false }; y.options.push(o); render();
     run("증상 선택지", sb.from("symptom_options").insert({ id: o.id, user_id: USER.id, symptom_id: y.id, label: v, sort_order: y.options.length - 1, is_hidden: false }));
   },
-  bool: (t) => { const d = UI.date, id = t.dataset.i, v = t.dataset.v === "true", r = recOf(d, id); setRec(d, id, r && r.v === v ? null : { v }); render(); },
+  bool: (t) => {
+    const d = UI.date, id = t.dataset.i, v = t.dataset.v === "true", r = recOf(d, id);
+    setRec(d, id, r && r.v === v ? null : v && r && r.t ? { v, t: r.t } : { v }); render();
+    if (v && !(r && r.v)) { const i = document.getElementById("bn-" + id); if (i) i.focus(); }
+  },
+  inote: (t) => {
+    const it = itemById(t.dataset.i); it.note = !it.note; render();
+    toast(it.note ? `${it.name}: '예'를 고르면 내용 칸이 나타납니다.` : `${it.name}: 내용 칸을 숨겼습니다. 적어 둔 내용은 남아 있습니다.`);
+    run("항목", sb.from("items").update({ has_note: it.note }).eq("id", it.id));
+  },
   photo: async (t) => {
     const m = (S.meal[UI.date] || {})[t.dataset.k]; if (!m || !m.p) return;
     const ov = document.getElementById("ov");
@@ -821,7 +837,7 @@ const act = {
   iadd: async () => {
     const n = document.getElementById("ni-name").value.trim(), t = UI.niType;
     if (!n) { toast("항목 이름을 입력해 주세요."); return; }
-    const it = { id: uuid(), name: n, type: t, unit: "", hidden: false, options: [], symptoms: [] };
+    const it = { id: uuid(), name: n, type: t, unit: "", hidden: false, note: false, options: [], symptoms: [] };
     if (t === "number") it.unit = (document.getElementById("ni-unit").value || "").trim();
     if (t === "scale" || t === "choice") {
       const ops = (document.getElementById("ni-opts").value || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -865,6 +881,7 @@ document.addEventListener("change", async (e) => {
   const t = e.target, c = t.dataset && t.dataset.ch; if (!c) return;
   const d = UI.date;
   if (c === "num") { const v = parseFloat(t.value); setRec(d, t.dataset.i, isNaN(v) ? null : { v: Math.round(v * 10) / 10 }); }
+  else if (c === "bnote") { const r = recOf(d, t.dataset.i); if (r && r.v) { const v = t.value.trim(); setRec(d, t.dataset.i, v ? { v: true, t: v } : { v: true }); } }
   else if (c === "text") { const v = t.value.trim(); setRec(d, t.dataset.i, v ? { v } : null); }
   else if (c === "meal") { const m = (S.meal[d] = S.meal[d] || {}), k = t.dataset.k; m[k] = m[k] || {}; m[k].t = t.value.trim(); saveMeal(d, k); }
   else if (c === "photo") {

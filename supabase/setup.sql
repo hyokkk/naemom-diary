@@ -32,6 +32,7 @@ create table items (
   unit        text,
   sort_order  int  not null default 0,
   is_hidden   boolean not null default false,
+  has_note    boolean not null default false,  -- 예/아니오 항목: '예'일 때 내용 칸 표시 (내용은 daily_records.value_text)
   created_at  timestamptz not null default now()
 );
 create index items_user_idx on items (user_id);

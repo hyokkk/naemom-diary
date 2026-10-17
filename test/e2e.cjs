@@ -72,6 +72,7 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   await waitFor(() => N(A.w).PHASE === "app", "가입 후 앱 진입");
   ok(mock.users[0].email === "hyokyung@naemom.app", "아이디는 소문자로 바꿔 내부 이메일로 저장");
   ok(mock.db.items.length === 8 && mock.db.item_options.length === 8, "기본 항목 8개와 선택지 8개 생성");
+  ok(mock.db.items.find((i) => i.name === "간식").has_note === true && mock.db.items.filter((i) => i.has_note).length === 1, "기본 항목 중 간식만 내용 칸 켜짐");
   const condRow = mock.db.items.find((i) => i.name === "몸 상태");
   ok(mock.db.symptoms.length === 4 && mock.db.symptoms.every((y) => y.item_id === condRow.id) && mock.db.symptom_options.length === 12, "몸 상태에 주요 증상 4개와 선택지 12개 생성");
   ok(["몸 상태", "체중", "운동", "요가", "간식", "삼시세끼", "배변", "기타 메모"].every((n) => text(A.w).includes(n)), "오늘 기록 화면에 기본 항목 표시");
@@ -86,6 +87,16 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   click(A.w, $(A.w, `[data-act=bool][data-i="${ex.id}"][data-v="true"]`)); await settle();
   ok(!mock.db.daily_records.some((r) => r.item_id === ex.id), "같은 버튼을 다시 누르면 기록 삭제");
   click(A.w, $(A.w, `[data-act=bool][data-i="${ex.id}"][data-v="true"]`)); await settle();
+  const snack = item(A.w, "간식");
+  ok(!$(A.w, `#bn-${snack.id}`), "간식은 '예'를 고르기 전에는 내용 칸 없음");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${snack.id}"][data-v="true"]`)); await settle();
+  ok($(A.w, `#bn-${snack.id}`) && !$(A.w, `#bn-${ex.id}`), "간식 '예'를 고르면 옆에 내용 칸 표시 (운동에는 없음)");
+  change(A.w, $(A.w, `#bn-${snack.id}`), "초코파이"); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === snack.id && r.value_bool === true && r.value_text === "초코파이"), "어떤 간식인지 저장");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${snack.id}"][data-v="false"]`)); await settle();
+  ok(!$(A.w, `#bn-${snack.id}`) && mock.db.daily_records.some((r) => r.item_id === snack.id && r.value_bool === false && r.value_text === null), "'아니오'로 바꾸면 내용 칸이 사라지고 내용도 비움");
+  click(A.w, $(A.w, `[data-act=bool][data-i="${snack.id}"][data-v="true"]`)); await settle();
+  change(A.w, $(A.w, `#bn-${snack.id}`), "초코파이"); await settle();
   const wt = item(A.w, "체중");
   change(A.w, $(A.w, `#n-${wt.id}`), "61.54"); await settle();
   ok(mock.db.daily_records.some((r) => r.item_id === wt.id && r.value_num === 61.5), "체중은 소수 첫째 자리로 저장");
@@ -204,6 +215,8 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   const yoga = item(A.w, "요가");
   click(A.w, $(A.w, `[data-act=ihide][data-i="${yoga.id}"]`)); await settle();
   ok(mock.db.items.find((i) => i.id === yoga.id).is_hidden === true, "요가 숨김 저장");
+  click(A.w, $(A.w, `[data-act=inote][data-i="${ex.id}"]`)); await settle();
+  ok(mock.db.items.find((i) => i.id === ex.id).has_note === true, "운동에도 내용 칸 켜기 저장");
   click(A.w, $(A.w, `[data-act=imove][data-i="${wt.id}"][data-n="1"]`)); await settle();
   const so = (n) => mock.db.items.find((i) => i.name === n).sort_order;
   ok(so("운동") === 1 && so("체중") === 2, "항목 순서 변경 저장");
@@ -245,6 +258,9 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   click(A.w, $(A.w, `[data-act=calf][data-k="${ex.id}"]`));
   await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"] .tg.solid`), "운동 표시");
   ok($(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("운동"), "필터에 운동을 추가하면 오늘 칸에 운동 표시");
+  click(A.w, $(A.w, `[data-act=calf][data-k="${snack.id}"]`));
+  await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("간식 초코파이"), "간식 내용 표시");
+  ok(true, "캘린더 간식 표시에 내용 함께 표시");
   click(A.w, $(A.w, `[data-act=lvgo][data-n="2"]`));
   await waitFor(() => text(A.w).includes("몸 상태 모아보기"), "모아보기");
   ok($$(A.w, ".dayrow").length === 1 && $(A.w, ".dayrow").textContent.includes("두통"), "2단계로 기록한 오늘과 그날 메모 표시");
@@ -273,6 +289,7 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
     ok(text(A.w).includes("몸 상태") && text(A.w).includes("비타민D") && $(A.w, "svg.chart"), `${l} 리포트 표시`);
     ok(text(A.w).includes("몸 상태 주요 증상") && text(A.w).includes("보통 1"), `${l} 리포트에 주요 증상 카드`);
     ok(text(A.w).includes("우리내과 소화기내과"), `${l} 리포트에 병원 치료 표시`);
+    ok(text(A.w).includes("자주 적은 내용: 초코파이 1회"), `${l} 리포트에 자주 적은 간식 표시`);
     if (k !== "year") ok(text(A.w).includes("두통 → 30분 뒤 괜찮아짐"), `${l} 리포트에 일회성 약 증상과 차도 표시`);
   }
   ok(text(A.w).includes("진통제") && text(A.w).includes("1회"), "연간 리포트는 일회성 약을 횟수로 묶음");
