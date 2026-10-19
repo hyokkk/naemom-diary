@@ -50,7 +50,8 @@ const ICON = {
   cal: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   rep: '<svg viewBox="0 0 24 24"><path d="M4 20V4M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>',
   med: '<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-40 12 12)"/><path d="M10.5 7.2l6.3 7.6"/></svg>',
-  gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>',
+  gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  medlog: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 19h4"/><circle cx="9" cy="7" r="1"/></svg>',
   cam: '<svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
 };
 
@@ -64,7 +65,7 @@ let S = emptyState();
 let UI = {};
 let ARM = null, LOGIN_ERR = "", SIGNUP = false, LOAD_ERR = "", lastLoad = 0;
 
-function emptyState() { return { items: [], rec: {}, meal: {}, meds: [], sup: {}, rl: {}, once: {}, visit: {} }; }
+function emptyState() { return { items: [], rec: {}, meal: {}, meds: [], sup: {}, rl: {}, once: {}, visit: {}, calDef: null }; }
 const uiKey = () => `naemom:ui:${USER ? USER.id : "-"}`;
 function loadUI() {
   let u = {};
@@ -145,7 +146,7 @@ async function createDefaults() {
 }
 
 async function loadAll() {
-  const [items, opts, recs, meals, meds, sups, onces, syms, symOpts, symRecs, visits, regLogs] = await Promise.all([
+  const [items, opts, recs, meals, meds, sups, onces, syms, symOpts, symRecs, visits, regLogs, vphotos, settings] = await Promise.all([
     fetchAll("items", ["sort_order", "id"]),
     fetchAll("item_options", ["sort_order", "id"]),
     fetchAll("daily_records", ["date", "item_id"]),
@@ -158,6 +159,8 @@ async function loadAll() {
     fetchAll("symptom_records", ["date", "symptom_id"]),
     fetchAll("hospital_visits", ["date"]),
     fetchAll("regular_med_logs", ["date", "medication_id"]),
+    fetchAll("visit_photos", ["visit_date", "created_at", "id"]),
+    fetchAll("user_settings", ["user_id"]),
   ]);
   if (!items.length) { await createDefaults(); return loadAll(); }
   /* v1.0에서 가입해 주요 증상이 없는 계정은 몸 상태에 기본 증상을 만들어 준다 */
@@ -198,17 +201,20 @@ async function loadAll() {
     (rec.sx = rec.sx || {})[x.symptom_id] = x.option_id || null;
   }
   for (const m of meals) {
-    (s.meal[m.date] = s.meal[m.date] || {})[MEAL_KEY[m.meal_type]] = { t: m.note || "", p: m.photo_path || null, th: m.thumb_path || null };
+    (s.meal[m.date] = s.meal[m.date] || {})[MEAL_KEY[m.meal_type]] = { t: m.note || "", s: m.symptom || "", p: m.photo_path || null, th: m.thumb_path || null };
   }
   s.meds = meds.map((m) => ({ id: m.id, kind: m.kind, name: m.name, start: m.start_date, end: m.end_date || "", note: m.note || "" }));
   for (const l of sups) (s.sup[l.date] = s.sup[l.date] || {})[l.medication_id] = true;
   for (const l of regLogs) (s.rl[l.date] = s.rl[l.date] || {})[l.medication_id] = { eff: l.effect || "" };
   for (const o of onces) (s.once[o.date] = s.once[o.date] || []).push({ id: o.id, n: o.name, sym: o.symptom || o.note || "", eff: o.effect || "" });
-  for (const v of visits) s.visit[v.date] = { hosp: v.hospital || "", treat: v.treatment || "", note: v.note || "", next: v.next_date || "" };
+  for (const v of visits) s.visit[v.date] = { hosp: v.hospital || "", treat: v.treatment || "", note: v.note || "", next: v.next_date || "", ph: [] };
+  for (const q of vphotos) if (s.visit[q.visit_date]) s.visit[q.visit_date].ph.push({ id: q.id, p: q.photo_path, th: q.thumb_path });
+  const st = settings[0];
+  if (st && Array.isArray(st.cal_defaults)) s.calDef = st.cal_defaults;
+  else { const c = s.items.find((x) => x.type === "scale"); s.calDef = ["visit", c ? c.id : null, "supp"].filter(Boolean); }
   S = s;
   lastLoad = Date.now();
-  if (!Array.isArray(UI.calF)) { const c = s.items.find((x) => x.type === "scale"); UI.calF = ["visit", c ? c.id : null, "supp"].filter(Boolean); UI.visitF = 1; saveUI(); }
-  if (!UI.visitF) { UI.calF.push("visit"); UI.visitF = 1; saveUI(); }
+  if (!Array.isArray(UI.calF)) { UI.calF = [...s.calDef]; saveUI(); }
 }
 
 /* ---------- DB 쓰기 ----------
@@ -269,12 +275,12 @@ function setSymptom(d, it, sid, val) { // val: undefined = 체크 해제, null =
 }
 function saveMeal(d, k) {
   const m = (S.meal[d] || {})[k] || {};
-  if (!m.t && !m.p) {
+  if (!m.t && !m.p && !m.s) {
     if (S.meal[d]) delete S.meal[d][k];
     return run("식사 기록", sb.from("meals").delete().eq("date", d).eq("meal_type", MEAL_DB[k]));
   }
   return run("식사 기록", sb.from("meals").upsert(
-    { user_id: USER.id, date: d, meal_type: MEAL_DB[k], note: m.t || null, photo_path: m.p || null, thumb_path: m.th || null, updated_at: now() },
+    { user_id: USER.id, date: d, meal_type: MEAL_DB[k], note: m.t || null, symptom: m.s || null, photo_path: m.p || null, thumb_path: m.th || null, updated_at: now() },
     { onConflict: "user_id,date,meal_type" }));
 }
 function saveItemOrder() {
@@ -339,10 +345,10 @@ function render() {
   }
   if (PHASE === "login") { el.innerHTML = vLogin(); return; }
   const v = UI.view;
-  const views = { today: vToday, cal: vCal, rep: vRep, med: vMed, set: vSet, lv: vLv, visit: vVisit, day: vDay };
+  const views = { today: vToday, cal: vCal, rep: vRep, med: vMed, set: vSet, lv: vLv, visit: vVisit, day: vDay, medlog: vMedLog };
   el.innerHTML = `<header class="top"><p class="brand">내몸일기</p><button class="iconbtn${v === "set" ? " on" : ""}" data-act="nav" data-v="set" aria-label="항목 설정">${ICON.gear}</button></header>
  <main>${(views[v] || vToday)()}</main>
- <nav class="tabs"><div class="tabs-in">${[["today", "오늘 기록"], ["cal", "캘린더"], ["rep", "리포트"], ["med", "약/영양제"], ["visit", "치료 일지"]].map(([k, l]) => `<button class="tab" data-act="nav" data-v="${k}" ${v === k || ((v === "lv" || v === "day") && k === "cal") ? 'aria-current="page"' : ""}>${ICON[k]}${l}</button>`).join("")}</div></nav>`;
+ <nav class="tabs"><div class="tabs-in">${[["today", "오늘 기록"], ["cal", "캘린더"], ["rep", "리포트"], ["med", "약/영양제"], ["medlog", "약 기록"], ["visit", "치료 일지"]].map(([k, l]) => `<button class="tab" data-act="nav" data-v="${k}" ${v === k || ((v === "lv" || v === "day") && k === "cal") ? 'aria-current="page"' : ""}>${ICON[k]}${l}</button>`).join("")}</div></nav>`;
 }
 function armBtn(key, label, cls, armed) { const on = ARM === key; return `<button class="${cls}${on ? " armed" : ""}" data-act="arm" data-k="${key}">${on ? armed || "한 번 더 누르면 실행" : label}</button>`; }
 
@@ -399,9 +405,9 @@ function itemCard(it, d, r) {
         const u = photoUrl(x.th);
         ph = `<div class="thumbwrap">${u ? `<img class="thumb" src="${esc(u)}" alt="${l} 사진" data-act="photo" data-k="${k}">` : '<span class="thumb ph"></span>'}<button class="x" data-act="photodel" data-k="${k}" aria-label="${l} 사진 삭제">×</button></div>`;
       } else ph = `<label class="photo" title="${l} 사진 첨부">${ICON.cam}<input type="file" accept="image/*" id="p-${k}" data-ch="photo" data-k="${k}" aria-label="${l} 사진 첨부"></label>`;
-      return `<div class="meal"><span class="lb">${l}</span><input type="text" id="m-${k}" data-ch="meal" data-k="${k}" value="${esc(x.t || "")}" placeholder="무엇을 드셨나요?">${ph}</div>`;
+      return `<div class="meal"><span class="lb">${l}</span><input type="text" id="m-${k}" data-ch="meal" data-k="${k}" value="${esc(x.t || "")}" placeholder="메뉴" aria-label="${l} 메뉴"><input type="text" id="ms-${k}" data-ch="mealsym" data-k="${k}" value="${esc(x.s || "")}" placeholder="증상" aria-label="${l} 먹고 난 뒤 증상">${ph}</div>`;
     }).join("");
-    hint = `${MEALS.filter(([k]) => m[k] && (m[k].t || m[k].th)).length}/3 기록`;
+    hint = `${MEALS.filter(([k]) => m[k] && (m[k].t || m[k].th || m[k].s)).length}/3 기록`;
   } else if (it.type === "text") {
     body = `<textarea id="t-${it.id}" data-ch="text" data-i="${it.id}" placeholder="오늘 특별히 남길 내용">${esc(r ? r.v : "")}</textarea>`;
   }
@@ -454,10 +460,11 @@ function vVisit() {
     <label>병원 / 진료과<input type="text" id="ve-hosp" data-ch="vf" data-f="hosp" data-d="${d}" value="${esc(v.hosp)}" placeholder="예: 우리내과 소화기내과"></label>
     <label>치료 내용<textarea id="ve-treat" data-ch="vf" data-f="treat" data-d="${d}" placeholder="검사, 시술, 상담 내용">${esc(v.treat)}</textarea></label>
     <label>의사 소견 / 처방<textarea id="ve-note" data-ch="vf" data-f="note" data-d="${d}" placeholder="진단, 처방약, 생활 지침">${esc(v.note)}</textarea></label>
-    <div class="vcopy"><span class="small muted">이 일지를 다른 날짜로 복사 (다음 예약일은 비워 둡니다)</span><div class="row" style="flex-wrap:nowrap"><input type="date" id="vc-date" value="${TODAY}" max="${TODAY}"><button class="btn sm ghost" data-act="vcopy" data-d="${d}">복사</button></div></div>
+    <div class="vph"><span class="lbl">처방전/소견서 등</span><div class="vthumbs">${(v.ph || []).map((q, i) => { const u = photoUrl(q.th); return `<div class="thumbwrap">${u ? `<img class="thumb" src="${esc(u)}" alt="처방전/소견서 사진 ${i + 1}" data-act="vphview" data-d="${d}" data-id="${q.id}">` : '<span class="thumb ph"></span>'}<button class="x" data-act="vphdel" data-d="${d}" data-id="${q.id}" aria-label="사진 ${i + 1} 삭제">×</button></div>`; }).join("")}<label class="photo" title="처방전/소견서 사진 첨부">${ICON.cam}<input type="file" accept="image/*" multiple id="vp-${d}" data-ch="vphoto" data-d="${d}" aria-label="처방전/소견서 사진 첨부"></label></div></div>
+    <div class="vcopy"><span class="small muted">이 일지를 다른 날짜로 복사 (다음 예약일과 사진은 옮기지 않습니다)</span><div class="row" style="flex-wrap:nowrap"><input type="date" id="vc-date" value="${TODAY}" max="${TODAY}"><button class="btn sm ghost" data-act="vcopy" data-d="${d}">복사</button></div></div>
     <div class="row" style="justify-content:space-between"><div class="row"><button class="btn sm ghost" data-act="calday" data-d="${d}">그날 기록 보기</button><button class="btn sm ghost" data-act="vopen" data-d="${d}">접기</button></div>${armBtn("vdel:" + d, "삭제", "btn sm danger", "한 번 더 누르면 삭제")}</div></div></section>`;
     } else {
-      h += `<button class="vcard" data-act="vopen" data-d="${d}"><span class="dh"><strong>${dlabel(d)}</strong>${v.next ? `<span class="pill red">다음 ${md(v.next)}</span>` : ""}</span><span class="small">${esc(vTitle(v))}</span>${v.treat ? `<span class="t">${esc(v.treat)}</span>` : ""}${v.note ? `<span class="t">${esc(v.note)}</span>` : ""}${!v.hosp && !v.treat && !v.note ? '<span class="t">내용을 아직 적지 않았습니다. 눌러서 작성하세요.</span>' : ""}</button>`;
+      h += `<button class="vcard" data-act="vopen" data-d="${d}"><span class="dh"><strong>${dlabel(d)}</strong>${v.next ? `<span class="pill red">다음 ${md(v.next)}</span>` : ""}</span><span class="small">${esc(vTitle(v))}</span>${v.treat ? `<span class="t">${esc(v.treat)}</span>` : ""}${v.note ? `<span class="t">${esc(v.note)}</span>` : ""}${v.ph && v.ph.length ? `<span class="small muted">처방전/소견서 사진 ${v.ph.length}장</span>` : ""}${!v.hosp && !v.treat && !v.note ? '<span class="t">내용을 아직 적지 않았습니다. 눌러서 작성하세요.</span>' : ""}</button>`;
     }
   }
   return h + "</div>";
@@ -497,7 +504,7 @@ function calTag(k, d) {
   const sh = esc(it.name.slice(0, 2));
   if (it.type === "number") return T(`${r.v}${esc(it.unit || "")}`);
   if (it.type === "bool") return r.v ? T(it.note && r.t ? `${sh} ${esc(r.t)}` : sh, "solid") : "";
-  if (it.type === "choice") { if (!r.v) return ""; const op = it.options.find((x) => x.id === r.o); return T(`${sh}${op ? " " + esc(op.label) : ""}`, "solid"); }
+  if (it.type === "choice") { if (!r.v) return T(`${sh} 없음`); const op = it.options.find((x) => x.id === r.o); return T(`${sh}${op ? " " + esc(op.label) : ""}`, "solid"); }
   if (it.type === "text") return r.v ? T("메모") : "";
   return "";
 }
@@ -513,7 +520,7 @@ function vCal() {
     h += `<button class="cell${out ? " out" : ""}${fut ? " fut" : ""}${d === TODAY ? " today" : ""}${sel.includes("visit") && S.visit[d] ? " hv" : ""}" data-act="calday" data-d="${d}" ${fut ? "disabled" : ""} aria-label="${dlabel(d)}${S.visit[d] ? ", 병원 치료" : ""}"><span class="hd"><span class="dn"><span class="n">${pd(d).getDate()}</span>${sel.includes("visit") ? visitIcon(d) : ""}</span>${fut ? "" : sel.filter(isScale).map((k) => lvCircle(k, d)).join("")}</span>${fut ? "" : sel.filter((k) => !isScale(k) && k !== "visit").map((k) => calTag(k, d)).join("")}</button>`;
     d = add(d, 1);
   }
-  h += `</div>${sel.filter(isScale).map((k) => { const it = itemById(k); return `<div class="legend"><span class="small muted">${esc(it.name)}: 단계를 누르면 그 단계로 기록한 날을 모아 볼 수 있습니다</span><div class="lgs">${it.options.map((x, j) => `<button class="lg" data-act="lvgo" data-i="${it.id}" data-n="${j + 1}"><span class="lvc lv${lvOf(it, j + 1)}">${j + 1}</span>${esc(x.label)}</button>`).join("")}</div></div>`; }).join("")}<p class="small muted">${sel.length ? "날짜를 누르면 그날의 기록을 볼 수 있습니다." : "위에서 보고 싶은 항목을 하나 이상 선택해 주세요."}</p>`;
+  h += `</div>${sel.filter(isScale).map((k) => { const it = itemById(k); return `<div class="legend"><span class="small muted">${esc(it.name)}: 단계를 누르면 그 단계로 기록한 날을 모아 볼 수 있습니다</span><div class="lgs">${it.options.map((x, j) => `<button class="lg" data-act="lvgo" data-i="${it.id}" data-n="${j + 1}"><span class="lvc lv${lvOf(it, j + 1)}">${j + 1}</span>${esc(x.label)}</button>`).join("")}</div></div>`; }).join("")}<p class="small muted">${sel.length ? "날짜를 누르면 그날의 기록을 볼 수 있습니다. 처음 켜져 있는 항목은 설정에서 바꿀 수 있습니다." : "위에서 보고 싶은 항목을 하나 이상 선택해 주세요."}</p>`;
   return h;
 }
 
@@ -525,7 +532,7 @@ function vDay() {
     const x = r[it.id], nm = esc(it.name);
     if (it.type === "meal") {
       const m = S.meal[d] || {};
-      const ls = MEALS.filter(([k]) => m[k] && (m[k].t || m[k].th)).map(([k, l]) => { const u = m[k].th ? photoUrl(m[k].th) : null; return `<div><span class="muted small">${l}</span> ${esc(m[k].t || "")}${u ? `<img class="mth" src="${esc(u)}" alt="${l} 사진" data-act="photo" data-k="${k}">` : ""}</div>`; });
+      const ls = MEALS.filter(([k]) => m[k] && (m[k].t || m[k].th || m[k].s)).map(([k, l]) => { const u = m[k].th ? photoUrl(m[k].th) : null; return `<div><span class="muted small">${l}</span> ${esc(m[k].t || "")}${m[k].s ? ` <span class="muted">· 증상: ${esc(m[k].s)}</span>` : ""}${u ? `<img class="mth" src="${esc(u)}" alt="${l} 사진" data-act="photo" data-k="${k}">` : ""}</div>`; });
       ls.length ? row(nm, ls.join("")) : miss.push(nm); continue;
     }
     if (x == null) { miss.push(nm); continue; }
@@ -542,7 +549,7 @@ function vDay() {
   const on = S.once[d] || [];
   if (on.length) row("일회성 약", on.map((q) => `<div>${esc(q.n)}${q.sym || q.eff ? ` <span class="muted">· ${esc(q.sym || "-")} → ${esc(q.eff || "차도 미기록")}</span>` : ""}</div>`).join(""));
   const vv = S.visit[d];
-  if (vv) row('<span style="color:var(--danger)">병원</span>', `<strong>${esc(vTitle(vv))}</strong>${vv.treat ? ` <span class="muted">· ${esc(vv.treat)}</span>` : ""} <button class="link" data-act="vopen" data-d="${d}">일지 보기</button>`);
+  if (vv) row('<span style="color:var(--danger)">병원</span>', `<strong>${esc(vTitle(vv))}</strong>${vv.treat ? ` <span class="muted">· ${esc(vv.treat)}</span>` : ""}${vv.ph && vv.ph.length ? ` <span class="muted">· 사진 ${vv.ph.length}장</span>` : ""} <button class="link" data-act="vopen" data-d="${d}">일지 보기</button>`);
   let h = `<div class="datebar"><button class="iconbtn" data-act="dvshift" data-n="-1" aria-label="이전 날">‹</button><div class="mid"><div class="d">${dlabel(d)}</div><span class="small muted">${d === TODAY ? "오늘 · " : ""}기록 보기</span></div><button class="iconbtn" data-act="dvshift" data-n="1" aria-label="다음 날" ${d >= TODAY ? "disabled" : ""}>›</button></div>`;
   h += '<div class="row dact"><button class="btn sm ghost" data-act="nav" data-v="cal">‹ 캘린더</button><button class="btn sm" data-act="dedit">기록 수정</button></div>';
   h += `<section class="card dview">${rows.join("") || '<p class="empty">이 날짜에는 기록이 없습니다.</p>'}${miss.length && rows.length ? `<p class="small muted dmiss">기록 안 함: ${miss.join(", ")}</p>` : ""}</section>`;
@@ -569,7 +576,7 @@ function dayRow(d, base) {
   for (const it of visItems()) {
     if (it.id === base.id) continue;
     const x = r[it.id], T = (t, c) => `<span class="tg c${c ? " " + c : ""}" style="--c:${colorOf(it.id)}">${t}</span>`;
-    if (it.type === "meal") { const m = S.meal[d] || {}; const s = MEALS.filter(([k]) => m[k] && m[k].t).map(([k, l]) => `${l} ${m[k].t}`); if (s.length) notes.push(esc(s.join(" / "))); continue; }
+    if (it.type === "meal") { const m = S.meal[d] || {}; const s = MEALS.filter(([k]) => m[k] && (m[k].t || m[k].s)).map(([k, l]) => `${l} ${m[k].t || ""}${m[k].s ? ` (증상: ${m[k].s})` : ""}`); if (s.length) notes.push(esc(s.join(" / "))); continue; }
     if (x == null) continue;
     if (it.type === "scale") { const s = score(it, x); if (s) tags.push(`<span class="tg c" style="--c:var(--lv${lvOf(it, s)});color:var(--ink)">${esc(it.name)} ${s}</span>`); }
     else if (it.type === "number") tags.push(T(`${esc(it.name)} ${x.v}${esc(it.unit || "")}`));
@@ -696,6 +703,31 @@ function vRep() {
   return h + "</div>";
 }
 
+/* 약 기록 모음: 차도를 적은 날을 약 이름별로 모은다. 띄어쓰기/대소문자만 다른 이름은 같은 약으로 본다 */
+function medGroups() {
+  const key = (n) => String(n || "").trim().replace(/\s+/g, " ").toLowerCase(), G = {};
+  const put = (name, row) => { const k = key(name); if (!k) return; const g = (G[k] = G[k] || { k, name: String(name).trim(), rows: [], kinds: new Set() }); g.rows.push(row); g.kinds.add(row.kind); };
+  for (const [d, o] of Object.entries(S.rl || {})) for (const [id, q] of Object.entries(o)) { if (!q || !q.eff) continue; const m = S.meds.find((x) => x.id === id); if (m) put(m.name, { d, kind: "정기", eff: q.eff }); }
+  for (const [d, a] of Object.entries(S.once || {})) for (const x of a) if (x.eff) put(x.n, { d, kind: "일회성", sym: x.sym, eff: x.eff });
+  const gs = Object.values(G);
+  gs.forEach((g) => { g.rows.sort((a, b) => b.d.localeCompare(a.d)); const m = S.meds.find((x) => key(x.name) === g.k && x.note); g.memo = m ? m.note : ""; });
+  return gs.sort((a, b) => b.rows[0].d.localeCompare(a.rows[0].d));
+}
+function vMedLog() {
+  const gs = medGroups();
+  let h = '<div class="datebar"><span style="width:38px;flex:none"></span><div class="mid"><div class="d">약 기록 모음</div><span class="small muted">차도를 적은 날만 약별로 모았습니다</span></div><span style="width:38px;flex:none"></span></div>';
+  if (!gs.length) return h + '<p class="empty">아직 차도를 적은 약 기록이 없습니다. 오늘 기록 화면에서 정기 약이나 일회성 약의 차도를 적으면 여기에 모입니다.</p>';
+  h += '<div class="stack">';
+  for (const g of gs) {
+    const open = (UI.mlOpen || {})[g.k], rows = open ? g.rows : g.rows.slice(0, 3), both = g.kinds.size > 1;
+    h += `<section class="card mlg"><h3><span>${esc(g.name)} ${[...g.kinds].map((k) => `<span class="pill${k === "정기" ? " warm" : ""}">${k}</span>`).join(" ")}</span><small>${g.rows.length}건 · 최근 ${md(g.rows[0].d)}</small></h3>${g.memo ? `<p class="mlmemo">메모: ${esc(g.memo)}</p>` : ""}`;
+    h += rows.map((r) => `<button class="mlr" data-act="calday" data-d="${r.d}"><span class="dd">${md(r.d)}</span><span class="tx">${r.sym ? `<span class="sy">${esc(r.sym)} → </span>` : ""}${esc(r.eff)}</span>${both ? `<span class="small muted">${r.kind}</span>` : "<span></span>"}</button>`).join("");
+    if (g.rows.length > 3) h += `<button class="link" style="margin-top:6px" data-act="mlmore" data-k="${esc(g.k)}">${open ? "접기" : `${g.rows.length - 3}건 더 보기`}</button>`;
+    h += "</section>";
+  }
+  return h + '</div><p class="small muted">이름이 같은 약은 하나로 묶습니다 (띄어쓰기와 대소문자는 구분하지 않음). 기록을 누르면 그날 기록을 볼 수 있습니다.</p>';
+}
+
 /* meds */
 function status(m) { if (TODAY < m.start) return ["예정", ""]; if (m.end && m.end < TODAY) return ["종료", ""]; return ["복용 중", "on"]; }
 function vMed() {
@@ -747,6 +779,7 @@ function vSet() {
   ${t === "number" ? '<input type="text" id="ni-unit" placeholder="단위 (예: 시간, 잔)">' : ""}
   ${t === "scale" || t === "choice" ? `<input type="text" id="ni-opts" placeholder="${t === "scale" ? "1단계부터 쉼표로 구분 (예: 나쁨, 보통, 좋음)" : "쉼표로 구분 (예: 적음, 보통, 많음)"}">` : ""}
   <button class="btn" data-act="iadd">항목 추가</button></div></section>`;
+  h += `<h2 class="sec">캘린더 기본 표시</h2><section class="card"><p class="small muted" style="margin:0 0 6px">캘린더 탭을 열 때 처음부터 켜 둘 항목을 고릅니다. 캘린더에서 잠깐 켜고 끈 것은 다음에 열 때 이 설정으로 돌아갑니다.</p><div class="cdgrid">${filterKeys().map((x) => `<label class="check"><input type="checkbox" id="cd-${x.k}" data-ch="caldef" data-k="${x.k}" ${(S.calDef || []).includes(x.k) ? "checked" : ""}><span>${esc(x.n)}</span></label>`).join("")}</div></section>`;
   const id = USER && USER.email ? USER.email.split("@")[0] : "";
   h += `<h2 class="sec">계정</h2><section class="card stack"><div class="row" style="justify-content:space-between"><span>로그인 아이디 <strong>${esc(id)}</strong></span><button class="btn sm ghost" data-act="logout">로그아웃</button></div></section>`;
   return h;
@@ -760,13 +793,13 @@ function copyVisit(from, to) {
   if (to === from) { toast("같은 날짜입니다. 다른 날짜를 골라 주세요."); return; }
   if (S.visit[to]) { toast("그 날짜에는 이미 치료 일지가 있습니다."); return; }
   const v = S.visit[from];
-  S.visit[to] = { hosp: v.hosp, treat: v.treat, note: v.note, next: "" }; UI.vOpen = to; go("visit");
+  S.visit[to] = { hosp: v.hosp, treat: v.treat, note: v.note, next: "", ph: [] }; UI.vOpen = to; go("visit");
   toast(`${md(from)} 일지를 ${md(to)}로 복사했습니다. 다음 예약일은 비워 두었습니다.`);
   saveVisit(to);
 }
 function go(v) { UI.view = v; saveUI(); render(); window.scrollTo(0, 0); }
 const act = {
-  nav: (t) => go(t.dataset.v),
+  nav: (t) => { const v = t.dataset.v; if (v === "cal" && !["cal", "day", "lv"].includes(UI.view)) UI.calF = [...(S.calDef || [])]; go(v); },
   dshift: (t) => { const d = add(UI.date, +t.dataset.n); if (d <= TODAY) { UI.date = d; saveUI(); render(); } },
   dtoday: () => { UI.date = TODAY; saveUI(); render(); },
   pick: (t) => {
@@ -799,6 +832,21 @@ const act = {
     toast(it.note ? `${it.name}: '예'를 고르면 내용 칸이 나타납니다.` : `${it.name}: 내용 칸을 숨겼습니다. 적어 둔 내용은 남아 있습니다.`);
     run("항목", sb.from("items").update({ has_note: it.note }).eq("id", it.id));
   },
+  vphview: async (t) => {
+    const v = S.visit[t.dataset.d], q = v && (v.ph || []).find((x) => x.id === t.dataset.id); if (!q) return;
+    const ov = document.getElementById("ov");
+    ov.innerHTML = '<span class="small" style="color:#fff">불러오는 중…</span>'; ov.hidden = false;
+    const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(q.p, 3600);
+    if (error || !data) { ov.hidden = true; toast("사진을 불러오지 못했습니다."); return; }
+    ov.innerHTML = `<img src="${esc(data.signedUrl)}" alt="처방전/소견서 사진">`;
+  },
+  vphdel: async (t) => {
+    const v = S.visit[t.dataset.d]; if (!v) return;
+    const q = (v.ph || []).find((x) => x.id === t.dataset.id); if (!q) return;
+    v.ph = v.ph.filter((x) => x.id !== q.id); render();
+    if (await run("사진 삭제", sb.from("visit_photos").delete().eq("id", q.id))) await removePhotos([q.p, q.th]);
+  },
+  mlmore: (t) => { UI.mlOpen = UI.mlOpen || {}; UI.mlOpen[t.dataset.k] = !UI.mlOpen[t.dataset.k]; saveUI(); render(); },
   photo: async (t) => {
     const m = (S.meal[UI.date] || {})[t.dataset.k]; if (!m || !m.p) return;
     const ov = document.getElementById("ov");
@@ -823,14 +871,14 @@ const act = {
   vtoggle: () => {
     const d = UI.date;
     if (S.visit[d]) { delete S.visit[d]; render(); run("치료 기록", sb.from("hospital_visits").delete().eq("date", d)); }
-    else { S.visit[d] = { hosp: "", treat: "", note: "", next: "" }; render(); saveVisit(d); }
+    else { S.visit[d] = { hosp: "", treat: "", note: "", next: "", ph: [] }; render(); saveVisit(d); }
   },
   vopen: (t) => { const d = t.dataset.d; UI.vOpen = UI.vOpen === d && UI.view === "visit" ? null : d; go("visit"); },
   vnew: () => {
     const d = document.getElementById("vn-date").value || TODAY;
     if (d > TODAY) { toast('오늘 이후 날짜에는 치료 일지를 쓸 수 없습니다. 예약은 "다음 예약일"에 적어 주세요.'); return; }
     UI.vOpen = d; saveUI();
-    if (!S.visit[d]) { S.visit[d] = { hosp: "", treat: "", note: "", next: "" }; render(); saveVisit(d); } else render();
+    if (!S.visit[d]) { S.visit[d] = { hosp: "", treat: "", note: "", next: "", ph: [] }; render(); saveVisit(d); } else render();
   },
   vcopy: (t) => copyVisit(t.dataset.d, document.getElementById("vc-date").value),
   vcopylast: () => copyVisit(Object.keys(S.visit).sort().pop(), document.getElementById("vn-date").value || TODAY),
@@ -911,8 +959,9 @@ const act = {
     if (ARM !== k) { ARM = k; render(); return; }
     ARM = null;
     if (k.startsWith("vdel:")) {
-      const d = k.slice(5); delete S.visit[d]; if (UI.vOpen === d) UI.vOpen = null; render(); toast("치료 기록을 지웠습니다.");
-      run("치료 기록", sb.from("hospital_visits").delete().eq("date", d));
+      const d = k.slice(5), old = ((S.visit[d] || {}).ph || []).flatMap((q) => [q.p, q.th]);
+      delete S.visit[d]; if (UI.vOpen === d) UI.vOpen = null; render(); toast("치료 기록을 지웠습니다.");
+      run("치료 기록", sb.from("hospital_visits").delete().eq("date", d)).then(() => removePhotos(old)); // 사진 행은 DB에서 함께 지워진다 (on delete cascade)
       return;
     }
     if (k.startsWith("del:")) {
@@ -936,6 +985,30 @@ document.addEventListener("change", async (e) => {
   else if (c === "bnote") { const r = recOf(d, t.dataset.i); if (r && r.v) { const v = t.value.trim(); setRec(d, t.dataset.i, v ? { v: true, t: v } : { v: true }); } }
   else if (c === "text") { const v = t.value.trim(); setRec(d, t.dataset.i, v ? { v } : null); }
   else if (c === "meal") { const m = (S.meal[d] = S.meal[d] || {}), k = t.dataset.k; m[k] = m[k] || {}; m[k].t = t.value.trim(); saveMeal(d, k); }
+  else if (c === "mealsym") { const m = (S.meal[d] = S.meal[d] || {}), k = t.dataset.k; m[k] = m[k] || {}; m[k].s = t.value.trim(); saveMeal(d, k); }
+  else if (c === "vphoto") {
+    const fs = [...(t.files || [])], vd = t.dataset.d, v = S.visit[vd]; if (!fs.length || !v) return;
+    toast("사진을 올리는 중입니다…");
+    let n = 0;
+    for (const f of fs) {
+      try {
+        const [big, small] = await Promise.all([toBlob(f, 1280, 0.75), toBlob(f, 200, 0.7)]);
+        const base = `${USER.id}/visits/${vd}/${Date.now()}-${n}`;
+        const r1 = await sb.storage.from(BUCKET).upload(`${base}.jpg`, big, { contentType: "image/jpeg" });
+        const r2 = await sb.storage.from(BUCKET).upload(`${base}-t.jpg`, small, { contentType: "image/jpeg" });
+        if (r1.error || r2.error) throw r1.error || r2.error;
+        const q = { id: uuid(), p: `${base}.jpg`, th: `${base}-t.jpg` };
+        if (await run("처방전/소견서 사진", sb.from("visit_photos").insert({ id: q.id, user_id: USER.id, visit_date: vd, photo_path: q.p, thumb_path: q.th }))) { (v.ph = v.ph || []).push(q); n++; }
+        else await removePhotos([q.p, q.th]);
+      } catch (err) { console.error(err); }
+    }
+    render();
+    toast(n === fs.length ? `사진 ${n}장을 첨부했습니다.` : `사진 ${fs.length}장 중 ${n}장만 첨부했습니다. 다시 시도해 주세요.`);
+  }
+  else if (c === "caldef") {
+    const k = t.dataset.k; S.calDef = t.checked ? [...new Set([...(S.calDef || []), k])] : (S.calDef || []).filter((x) => x !== k);
+    run("캘린더 기본 표시", sb.from("user_settings").upsert({ user_id: USER.id, cal_defaults: S.calDef, updated_at: now() }, { onConflict: "user_id" }));
+  }
   else if (c === "photo") {
     const f = t.files && t.files[0]; if (!f) return;
     const k = t.dataset.k;
@@ -994,7 +1067,7 @@ document.addEventListener("change", async (e) => {
     if (to > TODAY) { toast("오늘 이후 날짜로는 옮길 수 없습니다."); render(); return; }
     if (S.visit[to]) { toast("그 날짜에는 이미 치료 일지가 있습니다."); render(); return; }
     S.visit[to] = S.visit[from]; delete S.visit[from]; UI.vOpen = to; saveUI(); render();
-    run("치료 일지", sb.from("hospital_visits").upsert(visitRow(to), { onConflict: "user_id,date" }), sb.from("hospital_visits").delete().eq("date", from));
+    run("치료 일지", sb.from("hospital_visits").upsert(visitRow(to), { onConflict: "user_id,date" }), sb.from("visit_photos").update({ visit_date: to }).eq("visit_date", from), sb.from("hospital_visits").delete().eq("date", from));
   }
   else if (c === "solabel") { const v = t.value.trim(), x = symOf(t).options.find((o) => o.id === t.dataset.o); if (!v) { render(); return; } x.label = v; run("증상 선택지 이름", sb.from("symptom_options").update({ label: v }).eq("id", x.id)); }
   else if (c === "olabel") { const v = t.value.trim(), x = itemById(t.dataset.i).options.find((o) => o.id === t.dataset.o); if (!v) { render(); return; } x.label = v; run("선택지 이름", sb.from("item_options").update({ label: v }).eq("id", x.id)); }

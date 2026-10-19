@@ -8,6 +8,8 @@
 -- Supabase 대시보드 > SQL Editor > New query 에 붙여넣고 Run
 -- ============================================================
 
+drop table if exists user_settings    cascade;
+drop table if exists visit_photos     cascade;
 drop table if exists regular_med_logs cascade;
 drop table if exists hospital_visits  cascade;
 drop table if exists symptom_records  cascade;
@@ -70,7 +72,8 @@ create table meals (
   user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
   date        date not null,
   meal_type   text not null check (meal_type in ('breakfast','lunch','dinner')),
-  note        text,
+  note        text,                    -- 메뉴
+  symptom     text,                    -- 먹고 난 뒤 증상 (v1.5)
   photo_path  text,
   thumb_path  text,
   updated_at  timestamptz not null default now(),
@@ -170,7 +173,28 @@ create table regular_med_logs (
 );
 
 
--- 11) 권한: 로그인한 본인 행만 읽고 쓴다
+-- 11) 치료 일지 사진 (v1.5) — 처방전/소견서 등. 파일은 meal-photos 버킷의 <사용자 ID>/visits/<날짜>/ 아래
+-- 일지(hospital_visits)를 지우면 사진 행도 함께 지워진다. 일지 날짜를 옮기면 visit_date 도 따라 바뀐다.
+create table visit_photos (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  visit_date  date not null,
+  photo_path  text not null,
+  thumb_path  text,
+  created_at  timestamptz not null default now(),
+  foreign key (user_id, visit_date) references hospital_visits(user_id, date) on delete cascade on update cascade
+);
+create index visit_photos_user_idx on visit_photos (user_id, visit_date);
+
+-- 12) 사용자 설정 (v1.5) — cal_defaults: 캘린더를 열 때 처음 켜 둘 필터 키 목록
+create table user_settings (
+  user_id       uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  cal_defaults  jsonb,
+  updated_at    timestamptz not null default now()
+);
+
+
+-- 13) 권한: 로그인한 본인 행만 읽고 쓴다
 -- (Supabase 검사기가 반복문 안을 읽지 못해 RLS 경고를 띄우므로, 켜는 문장은 따로 적어 둔다)
 alter table items enable row level security;
 alter table item_options enable row level security;
@@ -184,11 +208,13 @@ alter table symptom_options enable row level security;
 alter table symptom_records enable row level security;
 alter table hospital_visits enable row level security;
 alter table regular_med_logs enable row level security;
+alter table visit_photos enable row level security;
+alter table user_settings enable row level security;
  ------------------------
 do $$
 declare t text;
 begin
-  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits','regular_med_logs'] loop
+  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits','regular_med_logs','visit_photos','user_settings'] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists own_rows on %I', t);
     execute format(
@@ -199,8 +225,8 @@ begin
 end $$;
 
 
--- 12) 사진 버킷 (비공개) ---------------------------------------
--- 경로 규칙: <사용자 ID>/<날짜>/<끼니>-<시각>.jpg
+-- 14) 사진 버킷 (비공개) ---------------------------------------
+-- 경로 규칙: 식사 <사용자 ID>/<날짜>/<끼니>-<시각>.jpg, 치료 일지 <사용자 ID>/visits/<날짜>/<시각>.jpg
 -- 첫 폴더 이름이 본인 ID인 파일만 읽고 쓸 수 있다.
 insert into storage.buckets (id, name, public)
 values ('meal-photos', 'meal-photos', false)

@@ -49,7 +49,7 @@ header.top{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;ali
 .brand{font-family:var(--f-display);font-weight:700;font-size:22px;letter-spacing:-.01em;margin:0}
 h2.sec{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.04em;margin:18px 0 8px}
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
-.tabs-in{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));width:100%;max-width:560px}
+.tabs-in{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));width:100%;max-width:560px}
 .tab{appearance:none;border:0;background:none;color:var(--muted);font:inherit;font-size:12px;padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
 .tab[aria-current="page"]{color:var(--accent);font-weight:600}
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
@@ -90,7 +90,8 @@ input[type=date]::-webkit-date-and-time-value{text-align:left;margin:0}
 .datebar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
 .datebar .mid{text-align:center;min-width:0}
 .datebar .d{font-family:var(--f-display);font-weight:700;font-size:20px}
-.meal{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:8px;align-items:center}
+.meal{display:grid;grid-template-columns:30px minmax(0,1.2fr) minmax(0,1fr) auto;gap:6px;align-items:center}
+.meal input[type=text]{padding:7px 8px}
 .meal + .meal{margin-top:8px}
 .meal .lb{font-size:13px;color:var(--muted)}
 .thumbwrap{position:relative;width:44px;height:44px}
@@ -218,6 +219,20 @@ input[type=date]::-webkit-date-and-time-value{text-align:left;margin:0}
 .endr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
 .endr strong{color:var(--ink);font-weight:500;font-size:13px}
 .endr .nt{grid-column:1/-1;overflow-wrap:anywhere}
+.vph{display:flex;flex-direction:column;gap:6px}
+.vph .lbl{font-size:12px;color:var(--muted)}
+.vthumbs{display:flex;flex-wrap:wrap;gap:8px}
+.vthumbs .thumbwrap,.vthumbs .thumb,.vthumbs .photo{width:64px;height:64px}
+.mlg{padding:12px 14px}
+.mlg h3{margin-bottom:6px}
+.mlmemo{font-size:12px;color:var(--muted);margin:0 0 6px;overflow-wrap:anywhere}
+.mlr{appearance:none;font:inherit;color:inherit;background:none;border:0;border-top:1px solid var(--line);width:100%;text-align:left;display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 0;cursor:pointer;font-size:14px}
+.mlr:first-of-type{border-top:0}
+.mlr .dd{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.mlr .tx{overflow-wrap:anywhere}
+.mlr .tx .sy{color:var(--muted)}
+.cdgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px}
+.cdgrid .check{padding:4px 0;font-size:14px}
 .vcopy{display:flex;flex-direction:column;gap:4px;padding-top:8px;border-top:1px dashed var(--line)}
 .boolrow .bnote{flex:1 1 140px;width:auto;min-width:0;padding:6px 10px}
 .oncex{display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid var(--line)}
