@@ -8,6 +8,7 @@
 -- Supabase 대시보드 > SQL Editor > New query 에 붙여넣고 Run
 -- ============================================================
 
+drop table if exists diary_entries    cascade;
 drop table if exists user_settings    cascade;
 drop table if exists visit_photos     cascade;
 drop table if exists regular_med_logs cascade;
@@ -190,11 +191,24 @@ create index visit_photos_user_idx on visit_photos (user_id, visit_date);
 create table user_settings (
   user_id       uuid primary key default auth.uid() references auth.users(id) on delete cascade,
   cal_defaults  jsonb,
+  cal_hidden    jsonb,                -- 캘린더 위쪽 목록에서 뺀 필터 키 목록 (v1.6)
   updated_at    timestamptz not null default now()
 );
 
+-- 13) 일기 (v1.6) — 기록/캘린더와 상관없이 자유롭게 쓰는 글. 하루에 여러 편 가능
+create table diary_entries (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date        date not null,
+  title       text,
+  body        text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index diary_entries_user_idx on diary_entries (user_id, date);
 
--- 13) 권한: 로그인한 본인 행만 읽고 쓴다
+
+-- 14) 권한: 로그인한 본인 행만 읽고 쓴다
 -- (Supabase 검사기가 반복문 안을 읽지 못해 RLS 경고를 띄우므로, 켜는 문장은 따로 적어 둔다)
 alter table items enable row level security;
 alter table item_options enable row level security;
@@ -210,11 +224,12 @@ alter table hospital_visits enable row level security;
 alter table regular_med_logs enable row level security;
 alter table visit_photos enable row level security;
 alter table user_settings enable row level security;
+alter table diary_entries enable row level security;
  ------------------------
 do $$
 declare t text;
 begin
-  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits','regular_med_logs','visit_photos','user_settings'] loop
+  foreach t in array array['items','item_options','daily_records','meals','medications','supplement_logs','onetime_meds','symptoms','symptom_options','symptom_records','hospital_visits','regular_med_logs','visit_photos','user_settings','diary_entries'] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists own_rows on %I', t);
     execute format(
@@ -225,7 +240,7 @@ begin
 end $$;
 
 
--- 14) 사진 버킷 (비공개) ---------------------------------------
+-- 15) 사진 버킷 (비공개) ---------------------------------------
 -- 경로 규칙: 식사 <사용자 ID>/<날짜>/<끼니>-<시각>.jpg, 치료 일지 <사용자 ID>/visits/<날짜>/<시각>.jpg
 -- 첫 폴더 이름이 본인 ID인 파일만 읽고 쓸 수 있다.
 insert into storage.buckets (id, name, public)

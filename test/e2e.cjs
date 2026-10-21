@@ -50,6 +50,7 @@ function check(w, el, v) { el.checked = v; el.dispatchEvent(new w.Event("change"
 function submit(w) { $(w, "#lgform").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true })); }
 const store = (w) => Object.fromEntries(Object.keys(w.localStorage).map((k) => [k, w.localStorage.getItem(k)]));
 const settle = () => sleep(60);
+function openAdd(w, k) { if (!$(w, `#ma-${k}-n`)) click(w, $(w, `[data-act=maddopen][data-k="${k}"]`)); }
 const N = (w) => w.__naemom;
 const item = (w, name) => N(w).S.items.find((i) => i.name === name);
 const card = (w, name) => $$(w, "section.card").find((c) => c.querySelector("h3") && c.querySelector("h3").textContent.startsWith(name));
@@ -72,7 +73,7 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   await waitFor(() => N(A.w).PHASE === "app", "가입 후 앱 진입");
   ok(mock.users[0].email === "hyokyung@naemom.app", "아이디는 소문자로 바꿔 내부 이메일로 저장");
   ok(mock.db.items.length === 8 && mock.db.item_options.length === 8, "기본 항목 8개와 선택지 8개 생성");
-  ok(mock.db.items.find((i) => i.name === "간식").has_note === true && mock.db.items.filter((i) => i.has_note).length === 1, "기본 항목 중 간식만 내용 칸 켜짐");
+  ok(mock.db.items.filter((i) => i.has_note).map((i) => i.name).sort().join("|") === ["간식", "요가", "운동"].sort().join("|"), "기본 항목 중 운동/요가/간식에 내용 칸 켜짐");
   const condRow = mock.db.items.find((i) => i.name === "몸 상태");
   ok(mock.db.symptoms.length === 4 && mock.db.symptoms.every((y) => y.item_id === condRow.id) && mock.db.symptom_options.length === 12, "몸 상태에 주요 증상 4개와 선택지 12개 생성");
   ok(["몸 상태", "체중", "운동", "요가", "간식", "삼시세끼", "배변", "기타 메모"].every((n) => text(A.w).includes(n)), "오늘 기록 화면에 기본 항목 표시");
@@ -90,7 +91,10 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   const snack = item(A.w, "간식");
   ok(!$(A.w, `#bn-${snack.id}`), "간식은 '예'를 고르기 전에는 내용 칸 없음");
   click(A.w, $(A.w, `[data-act=bool][data-i="${snack.id}"][data-v="true"]`)); await settle();
-  ok($(A.w, `#bn-${snack.id}`) && !$(A.w, `#bn-${ex.id}`), "간식 '예'를 고르면 옆에 내용 칸 표시 (운동에는 없음)");
+  ok($(A.w, `#bn-${snack.id}`) && $(A.w, `#bn-${ex.id}`), "운동/간식 '예'를 고르면 옆에 내용 칸 표시");
+  ok($(A.w, `#bn-${ex.id}`).placeholder.startsWith("어떤 운동을 했나요") && $(A.w, `#bn-${snack.id}`).placeholder === "어떤 간식이었나요?", "항목에 맞는 안내 문구");
+  change(A.w, $(A.w, `#bn-${ex.id}`), "걷기 30분"); await settle();
+  ok(mock.db.daily_records.some((r) => r.item_id === ex.id && r.value_bool === true && r.value_text === "걷기 30분"), "어떤 운동을 했는지 저장");
   change(A.w, $(A.w, `#bn-${snack.id}`), "초코파이"); await settle();
   ok(mock.db.daily_records.some((r) => r.item_id === snack.id && r.value_bool === true && r.value_text === "초코파이"), "어떤 간식인지 저장");
   click(A.w, $(A.w, `[data-act=bool][data-i="${snack.id}"][data-v="false"]`)); await settle();
@@ -163,8 +167,13 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
 
   console.log("\n[약/영양제]");
   click(A.w, byText(A.w, "약/영양제", ".tab"));
-  await waitFor(() => $(A.w, "#ma-supplement-n"), "약/영양제 화면");
+  await waitFor(() => $(A.w, '[data-act=maddopen][data-k="supplement"]'), "약/영양제 화면");
+  ok(!$(A.w, "#ma-supplement-n") && !$(A.w, "#ma-regular-n") && $$(A.w, ".addbtn").length === 2, "등록 칸은 접혀 있고 등록 버튼만 표시");
+  openAdd(A.w, "supplement");
+  ok($(A.w, "#ma-supplement-n") && !$(A.w, "#ma-regular-n"), "등록 버튼을 누르면 그 칸만 열림");
   $(A.w, "#ma-supplement-n").value = "비타민D"; click(A.w, $(A.w, '[data-act=medadd][data-k="supplement"]')); await settle();
+  ok(!$(A.w, "#ma-supplement-n"), "등록하면 칸이 다시 접힘");
+  openAdd(A.w, "regular");
   $(A.w, "#ma-regular-n").value = "비염약"; $(A.w, "#ma-regular-note").value = "아침 1정"; click(A.w, $(A.w, '[data-act=medadd][data-k="regular"]')); await settle();
   ok(mock.db.medications.length === 2 && mock.db.medications.some((m) => m.kind === "supplement" && m.start_date === TODAY && m.end_date === null), "영양제와 정기 복용 약 등록");
   const rhn = mock.db.medications.find((m) => m.name === "비염약");
@@ -177,12 +186,14 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   click(A.w, $(A.w, `[data-act=medit][data-m="${rhn.id}"]`));
   change(A.w, $(A.w, `#mo-${rhn.id}`), "3일째부터 효과"); await settle();
   ok(mock.db.medications.find((m) => m.id === rhn.id).note === "3일째부터 효과" && $(A.w, `#mo-${rhn.id}`).getAttribute("rows") === "2", "메모(차도) 칸에서 바로 수정 저장, 두 줄 높이");
+  openAdd(A.w, "regular");
   $(A.w, "#ma-regular-n").value = "위장약"; $(A.w, "#ma-regular-s").value = "2000-01-01"; $(A.w, "#ma-regular-e").value = "2000-01-10";
   click(A.w, $(A.w, '[data-act=medadd][data-k="regular"]')); await settle();
   ok(mock.db.medications.length === 3 && !$$(A.w, ".med strong").some((e) => e.textContent === "위장약"), "복용 종료된 정기 약은 기본으로 숨김");
   click(A.w, $(A.w, "[data-act=endtg]"));
   ok($$(A.w, ".endr strong").some((e) => e.textContent === "위장약"), "버튼을 누르면 종료된 약을 작은 목록으로 표시");
   click(A.w, $(A.w, "[data-act=endtg]"));
+  openAdd(A.w, "regular");
   $(A.w, "#ma-regular-n").value = "잘못된약"; $(A.w, "#ma-regular-s").value = TODAY; $(A.w, "#ma-regular-e").value = "2000-01-01";
   click(A.w, $(A.w, '[data-act=medadd][data-k="regular"]')); await settle();
   ok(mock.db.medications.length === 3 && text(A.w).includes("종료일이 시작일보다 빠릅니다"), "종료일이 시작일보다 빠르면 등록하지 않음");
@@ -207,6 +218,12 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   ok(mock.db.onetime_meds.length === 1 && mock.db.onetime_meds[0].name === "진통제" && mock.db.onetime_meds[0].symptom === "두통" && mock.db.onetime_meds[0].effect === null, "일회성 약을 증상과 함께 기입 (차도는 비워 둠)");
   change(A.w, $(A.w, `#oe-${mock.db.onetime_meds[0].id}`), "30분 뒤 괜찮아짐"); await settle();
   ok(mock.db.onetime_meds[0].effect === "30분 뒤 괜찮아짐", "차도를 나중에 기입");
+  const oid = mock.db.onetime_meds[0].id;
+  change(A.w, $(A.w, `#on-n-${oid}`), "타이레놀"); change(A.w, $(A.w, `#os-${oid}`), "편두통"); await settle();
+  ok(mock.db.onetime_meds[0].name === "타이레놀" && mock.db.onetime_meds[0].symptom === "편두통", "등록한 일회성 약의 이름과 증상 수정");
+  change(A.w, $(A.w, `#on-n-${oid}`), ""); await settle();
+  ok(mock.db.onetime_meds[0].name === "타이레놀" && $(A.w, `#on-n-${oid}`).value === "타이레놀" && text(A.w).includes("비울 수 없습니다"), "이름을 비우면 원래 이름 유지");
+  change(A.w, $(A.w, `#on-n-${oid}`), "진통제"); change(A.w, $(A.w, `#os-${oid}`), "두통"); await settle();
   $(A.w, "#once-n").value = "소화제"; click(A.w, $(A.w, "[data-act=onceadd]")); await settle();
   click(A.w, $$(A.w, "[data-act=oncedel]").pop()); await settle();
   ok(mock.db.onetime_meds.length === 1, "일회성 약 삭제");
@@ -220,7 +237,7 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   click(A.w, $(A.w, "[data-act=vtoggle]")); await settle();
   click(A.w, $(A.w, `[data-act=vopen][data-d="${TODAY}"]`));
   await waitFor(() => $(A.w, "#ve-hosp"), "치료 일지 편집");
-  ok($$(A.w, ".tab").length === 6 && $$(A.w, ".tab").map((b) => b.textContent.trim()).join("|").includes("약/영양제|약 기록|치료 일지") && $(A.w, '.tab[aria-current="page"]').textContent.includes("치료 일지"), "치료 일지 탭으로 이동");
+  ok($$(A.w, ".tab").length === 7 && $$(A.w, ".tab").map((b) => b.textContent.trim()).join("|").includes("약/영양제|약 기록|치료 일지") && $(A.w, '.tab[aria-current="page"]').textContent.includes("치료 일지"), "치료 일지 탭으로 이동");
   change(A.w, $(A.w, "#ve-hosp"), "우리내과 소화기내과"); change(A.w, $(A.w, "#ve-treat"), "위내시경"); change(A.w, $(A.w, "#ve-note"), "역류성 식도염 소견"); change(A.w, $(A.w, "#ve-next"), NEXT); await settle();
   const vrow = mock.db.hospital_visits.find((v) => v.date === TODAY);
   ok(vrow.hospital === "우리내과 소화기내과" && vrow.treatment === "위내시경" && vrow.note === "역류성 식도염 소견" && vrow.next_date === NEXT, "치료 일지 내용 저장");
@@ -278,7 +295,9 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   click(A.w, $(A.w, `[data-act=ibad][data-i="${mood.id}"]`)); await settle();
   ok(mock.db.items.find((i) => i.id === mood.id).high_is_bad === true, "단계 방향 바꾸기 저장");
   click(A.w, $(A.w, `[data-act=inote][data-i="${ex.id}"]`)); await settle();
-  ok(mock.db.items.find((i) => i.id === ex.id).has_note === true, "운동에도 내용 칸 켜기 저장");
+  ok(mock.db.items.find((i) => i.id === ex.id).has_note === false, "운동 내용 칸 끄기 저장");
+  click(A.w, $(A.w, `[data-act=inote][data-i="${ex.id}"]`)); await settle();
+  ok(mock.db.items.find((i) => i.id === ex.id).has_note === true, "운동 내용 칸 다시 켜기 저장");
   click(A.w, $(A.w, `[data-act=imove][data-i="${wt.id}"][data-n="1"]`)); await settle();
   const so = (n) => mock.db.items.find((i) => i.name === n).sort_order;
   ok(so("운동") === 1 && so("체중") === 2, "항목 순서 변경 저장");
@@ -294,8 +313,10 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
 
   click(A.w, $(A.w, '[data-act=nav][data-v="set"]'));
   click(A.w, $(A.w, `[data-act=symopen][data-i="${cond.id}"]`));
-  await waitFor(() => $(A.w, `#so-${symId("속쓰림")}`), "증상 선택지 편집");
-  ok($$(A.w, ".symset").length === 4, "설정에서 증상 4개의 선택지 편집 표시");
+  await waitFor(() => $(A.w, `[data-act=soopen][data-s="${symId("속쓰림")}"]`), "주요 증상 편집");
+  ok($$(A.w, ".symset").length === 4 && !$(A.w, `#so-${symId("속쓰림")}`), "설정에서 증상 4개 표시, 선택지는 접혀 있음");
+  click(A.w, $(A.w, `[data-act=soopen][data-s="${symId("속쓰림")}"]`)); click(A.w, $(A.w, `[data-act=soopen][data-s="${symId("위 쥐어짬")}"]`));
+  ok($(A.w, `#so-${symId("속쓰림")}`) && $(A.w, `#sl-${optId("위 쥐어짬", "보통")}`), "증상별 선택지 펼치기");
   $(A.w, `#so-${symId("속쓰림")}`).value = "매우 심함"; click(A.w, $(A.w, `[data-act=soadd][data-s="${symId("속쓰림")}"]`)); await settle();
   ok(mock.db.symptom_options.some((o) => o.symptom_id === symId("속쓰림") && o.label === "매우 심함" && o.sort_order === 3), "증상 선택지 추가");
   change(A.w, $(A.w, `#sl-${optId("속쓰림", "약함")}`), "가벼움"); await settle();
@@ -304,11 +325,31 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   ok(mock.db.symptom_options.find((o) => o.id === optId("위 쥐어짬", "보통")).is_hidden === true, "증상 선택지 숨김");
   click(A.w, $(A.w, `[data-act=somove][data-o="${optId("속쓰림", "매우 심함")}"][data-n="-1"]`)); await settle();
   ok(mock.db.symptom_options.find((o) => o.id === optId("속쓰림", "매우 심함")).sort_order === 2, "증상 선택지 순서 변경");
+  ok($(A.w, `#sa-${cond.id}`) && $$(A.w, "[data-act=soopen]").length >= 4, "주요 증상 편집: 증상 추가 칸과 증상별 선택지 접기");
+  $(A.w, `#sa-${cond.id}`).value = "메스꺼움"; click(A.w, $(A.w, `[data-act=symadd][data-i="${cond.id}"]`)); await settle();
+  const nsy = mock.db.symptoms.find((y) => y.name === "메스꺼움");
+  ok(nsy && nsy.sort_order === 4 && mock.db.symptom_options.filter((o) => o.symptom_id === nsy.id).map((o) => o.label).join("/") === "약함/보통/심함", "증상 추가 (약함/보통/심함 선택지로 시작)");
+  change(A.w, $(A.w, `#sn-${nsy.id}`), "구역감"); await settle();
+  ok(mock.db.symptoms.find((y) => y.id === nsy.id).name === "구역감", "증상 이름 수정");
+  click(A.w, $(A.w, `[data-act=symmove][data-s="${nsy.id}"][data-n="-1"]`)); await settle();
+  ok(mock.db.symptoms.find((y) => y.id === nsy.id).sort_order === 3, "증상 순서 변경");
+  click(A.w, $(A.w, `[data-act=arm][data-k="symdel:${cond.id}:${nsy.id}"]`));
+  ok($(A.w, `[data-k="symdel:${cond.id}:${nsy.id}"]`).textContent === "정말 삭제" && mock.db.symptoms.some((y) => y.id === nsy.id), "삭제는 한 번 더 눌러야 실행");
+  click(A.w, $(A.w, `[data-act=arm][data-k="symdel:${cond.id}:${nsy.id}"]`)); await settle();
+  ok(!mock.db.symptoms.some((y) => y.id === nsy.id) && !mock.db.symptom_options.some((o) => o.symptom_id === nsy.id) && mock.db.user_settings.some((r) => r.user_id === mock.users[0].id), "기록 없는 증상은 완전히 삭제 (설정 행 생성)");
+  const used = symId("속쓰림");
+  click(A.w, $(A.w, `[data-act=arm][data-k="symdel:${cond.id}:${used}"]`)); click(A.w, $(A.w, `[data-act=arm][data-k="symdel:${cond.id}:${used}"]`)); await settle();
+  ok(mock.db.symptoms.find((y) => y.id === used).is_hidden === true && text(A.w).includes("지난 기록과 리포트에는 남습니다"), "기록이 있는 증상은 숨김 처리");
+  click(A.w, $(A.w, `[data-act=symshow][data-s="${used}"]`)); await settle();
+  ok(mock.db.symptoms.find((y) => y.id === used).is_hidden === false, "숨긴 증상 다시 표시");
 
-  ok($$(A.w, "[data-ch=caldef]").length > 5 && $(A.w, "#cd-visit").checked && $(A.w, "#cd-supp").checked && !$(A.w, `#cd-${bw.id}`).checked, "설정에 캘린더 기본 표시 (병원/몸 상태/영양제가 기본)");
-  check(A.w, $(A.w, `#cd-${bw.id}`), true); await settle();
+  const cvOn = (k) => { const b = $(A.w, `[data-act=calvis][data-k="${k}"].on`); return b && b.dataset.v; };
+  ok($$(A.w, ".cvrow").length > 5 && cvOn("visit") === "def" && cvOn("supp") === "def" && cvOn(bw.id) === "show", "설정의 캘린더 항목 (병원/몸 상태/영양제는 처음부터 켜기)");
+  click(A.w, $(A.w, `[data-act=calvis][data-k="${bw.id}"][data-v="def"]`)); await settle();
+  click(A.w, $(A.w, `[data-act=calvis][data-k="${wt.id}"][data-v="hide"]`)); await settle();
   const us = mock.db.user_settings.find((r) => r.user_id === mock.users[0].id);
-  ok(us && us.cal_defaults.includes(bw.id) && us.cal_defaults.includes("supp") && us.cal_defaults.length === 4, "기본 표시에 배변 추가 저장");
+  ok(us && us.cal_defaults.includes(bw.id) && us.cal_defaults.includes("supp") && us.cal_defaults.length === 4, "배변을 처음부터 켜기로 저장");
+  ok(us.cal_hidden.includes(wt.id) && cvOn(wt.id) === "hide", "체중을 캘린더 목록에서 숨김 저장");
 
   console.log("\n[캘린더 / 모아보기]");
   click(A.w, byText(A.w, "캘린더", ".tab"));
@@ -316,9 +357,10 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   const todayCell = $(A.w, `.cell[data-d="${TODAY}"]`);
   ok($(A.w, ".cal .dow").textContent === "일" && new Date(`${$(A.w, ".cell").dataset.d}T00:00`).getDay() === 0, "캘린더는 일요일부터 시작");
   ok(todayCell && todayCell.querySelector(".lvc.lv4") && todayCell.querySelector(".lvc").textContent === "2", "오늘 칸에 몸 상태 2단계 원 (높을수록 나쁨이라 연두색)");
-  ok(todayCell.textContent.includes("영양 1/1"), "영양제 복용 현황 표시 (기본 필터)");
-  ok(todayCell.textContent.includes("배변 정상"), "설정에서 켠 배변이 처음부터 표시");
-  if ($(A.w, `.cell[data-d="${YDAY}"]`)) ok($(A.w, `.cell[data-d="${YDAY}"]`).textContent.includes("배변 없음") && !$(A.w, `.cell[data-d="${YDAY}"] .tg.solid`), "배변 없음인 날은 연한 '배변 없음' 표시");
+  ok(todayCell.textContent.includes("1/1") && !todayCell.textContent.includes("영양"), "영양제 복용 현황은 값만 표시 (기본 필터)");
+  ok(todayCell.textContent.includes("정상") && !todayCell.textContent.includes("배변"), "설정에서 켠 배변이 처음부터 표시 (값만)");
+  ok(!$(A.w, `[data-act=calf][data-k="${wt.id}"]`), "숨긴 체중은 캘린더 목록에 없음");
+  if ($(A.w, `.cell[data-d="${YDAY}"]`)) ok($(A.w, `.cell[data-d="${YDAY}"]`).textContent.includes("없음") && !$(A.w, `.cell[data-d="${YDAY}"] .tg.solid`), "배변 없음인 날은 연한 '없음' 표시");
   ok(!$$(A.w, "[data-act=calf]").some((b) => b.textContent.includes("요가")), "숨긴 항목은 필터에 없음");
   ok($$(A.w, "[data-act=calf]").slice(0, 3).map((b) => b.textContent).join("|") === "병원 치료|몸 상태|주요 증상", "필터 순서: 병원 치료, 몸 상태, 주요 증상");
   ok(todayCell.classList.contains("hv") && todayCell.querySelector(".vic:not(.res)"), "치료 받은 날은 빨간 칸과 병원 아이콘");
@@ -327,12 +369,12 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   if (NEXT.slice(0, 7) !== TODAY.slice(0, 7)) { click(A.w, $(A.w, "[data-act=caltoday]")); await settle(); }
   click(A.w, $(A.w, `[data-act=calf][data-k="${ex.id}"]`));
   await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"] .tg.solid`), "운동 표시");
-  ok($(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("운동"), "필터에 운동을 추가하면 오늘 칸에 운동 표시");
+  ok($(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("걷기 30분"), "필터에 운동을 추가하면 오늘 칸에 적은 운동 내용 표시");
   click(A.w, $(A.w, '[data-act=calf][data-k="reg"]'));
-  await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("약 1/1"), "정기 약 표시");
+  await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"]`).querySelector('[title="정기 복용 약 1/1"]'), "정기 약 표시");
   ok(true, "캘린더에 정기 약 복용 현황 표시");
   click(A.w, $(A.w, `[data-act=calf][data-k="${snack.id}"]`));
-  await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("간식 초코파이"), "간식 내용 표시");
+  await waitFor(() => $(A.w, `.cell[data-d="${TODAY}"]`).textContent.includes("초코파이"), "간식 내용 표시");
   ok(true, "캘린더 간식 표시에 내용 함께 표시");
   click(A.w, $(A.w, `[data-act=lvgo][data-n="2"]`));
   await waitFor(() => text(A.w).includes("몸 상태 모아보기"), "모아보기");
@@ -390,7 +432,7 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   ok(!text(A.w).includes("소화제"), "차도를 적지 않은 약은 빠짐");
   click(A.w, byText(A.w, "캘린더", ".tab")); await settle();
   ok(JSON.stringify(N(A.w).UI.calF) === JSON.stringify(N(A.w).S.calDef), "다른 탭에서 캘린더로 오면 기본 표시로 돌아감");
-  ok($(A.w, ".cal").parentElement.textContent.includes("설정에서 바꿀 수 있습니다"), "캘린더 안내에 설정 위치");
+  ok($(A.w, ".cal").parentElement.textContent.includes("캘린더 항목\"에서 바꿀 수 있습니다"), "캘린더 안내에 설정 위치");
   click(A.w, byText(A.w, "약 기록", ".tab")); await settle();
   click(A.w, $(A.w, ".mlr"));
   await waitFor(() => $(A.w, ".dview"), "약 기록에서 조회 모드");
@@ -410,6 +452,7 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   ok(byId(SB.meds) === byId(SA.meds) && JSON.stringify(SB.sup) === JSON.stringify(SA.sup) && JSON.stringify(SB.once) === JSON.stringify(SA.once), "약/영양제 기록이 그대로 복원");
   ok(SB.meal[TODAY].l.t === "비빔밥" && SB.meal[TODAY].l.s === "더부룩함" && !SB.meal[TODAY].l.p, "식사 기록(증상 포함) 복원");
   ok(JSON.stringify(SB.calDef) === JSON.stringify(SA.calDef) && SB.calDef.includes(bw.id), "캘린더 기본 표시 복원");
+  ok(JSON.stringify(SB.calHide) === JSON.stringify(SA.calHide) && SB.calHide.includes(wt.id), "캘린더 숨김 항목 복원");
   ok(JSON.stringify(SB.visit) === JSON.stringify(SA.visit) && SB.visit[TODAY].next === NEXT, "치료 일지(사진 포함) 복원");
   ok(SB.visit[TODAY].ph.length === 1, "일지 사진 복원");
   ok(JSON.stringify(SB.rl) === JSON.stringify(SA.rl) && SB.rl[TODAY][rhn.id].eff === "콧물 줄어듦", "정기 약 복용 기록 복원");
@@ -426,6 +469,53 @@ const TODAY = (() => { const d = new Date(); return `${d.getFullYear()}-${String
   ok(!mock.db.hospital_visits.length && text(B.w).includes("아직 치료 일지가 없습니다"), "한 번 더 눌러 일지 삭제");
   await waitFor(() => !Object.keys(mock.objects).length, "일지 사진 파일 삭제");
   ok(!mock.db.visit_photos.length, "일지를 지우면 사진 행과 파일도 삭제");
+
+  console.log("\n[기록 복사]");
+  click(B.w, $(B.w, '[data-act=nav][data-v="today"]'));
+  await waitFor(() => $(B.w, "[data-act=cpopen]"), "오늘 기록");
+  click(B.w, $(B.w, '[data-act=dshift][data-n="-1"]')); click(B.w, $(B.w, '[data-act=dshift][data-n="-1"]'));
+  const D2 = (() => { const d = new Date(); d.setDate(d.getDate() - 2); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  ok(N(B.w).UI.date === D2, "이틀 전으로 이동");
+  const wt2 = item(B.w, "체중");
+  change(B.w, $(B.w, `#n-${wt2.id}`), "70"); await settle();
+  click(B.w, $(B.w, "[data-act=cpopen]"));
+  ok($(B.w, "#cp-from") && $$(B.w, "[data-ch=cpg]").length === 5 && $$(B.w, "[data-ch=cpg]").every((x) => x.checked), "복사 칸: 날짜와 5가지 범위 (모두 켜짐)");
+  change(B.w, $(B.w, "#cp-from"), TODAY); await settle();
+  ok($(B.w, ".cpsum").textContent.includes("걷기 30분") && $(B.w, ".cpsum").textContent.includes("식사"), "가져올 날짜의 기록 요약");
+  click(B.w, $(B.w, "[data-act=cpdo]")); await settle(); await settle();
+  const dr = (n) => mock.db.daily_records.find((r) => r.date === D2 && r.item_id === item(B.w, n).id);
+  ok(Number(dr("체중").value_num) === 70, "이미 적은 칸(체중)은 덮어쓰지 않음");
+  ok(dr("몸 상태") && dr("운동").value_text === "걷기 30분" && dr("간식").value_text === "초코파이" && !dr("기타 메모"), "몸 상태/운동 메모/간식 메모는 복사, 기타 메모는 제외");
+  ok(mock.db.symptom_records.some((x) => x.date === D2), "주요 증상 복사");
+  ok(mock.db.meals.some((m) => m.date === D2 && m.meal_type === "lunch" && m.note === "비빔밥" && m.symptom === "더부룩함" && !m.photo_path), "식사 메뉴/증상 복사 (사진 제외)");
+  ok(mock.db.supplement_logs.some((x) => x.date === D2) || !N(B.w).S.meds.some((m) => m.kind === "supplement" && m.start <= D2), "영양제 체크 복사 (복용 기간인 약만)");
+  const oc = mock.db.onetime_meds.find((x) => x.date === D2);
+  ok(oc && oc.name === "진통제" && oc.symptom === "두통" && oc.effect === null, "일회성 약은 이름/증상만 복사");
+  ok(!mock.db.hospital_visits.some((v) => v.date === D2), "치료 일지는 복사하지 않음");
+  ok(text(B.w).includes("칸을 채웠습니다"), "채운 칸 수 안내");
+  click(B.w, $(B.w, "[data-act=cpopen]")); change(B.w, $(B.w, "#cp-from"), TODAY); click(B.w, $(B.w, "[data-act=cpdo]")); await settle();
+  ok(text(B.w).includes("채울 빈 칸이 없습니다"), "다시 복사하면 채울 칸 없음 안내");
+  change(B.w, $(B.w, `#on-n-${oc.id}`), "진 통제"); change(B.w, $(B.w, `#oe-${oc.id}`), "1시간 뒤 괜찮아짐"); await settle();
+  click(B.w, byText(B.w, "약 기록", ".tab"));
+  await waitFor(() => $(B.w, ".mlg"), "약 기록");
+  ok($$(B.w, ".mlg").filter((g) => g.textContent.includes("진통제")).length === 1 && $$(B.w, ".mlg").find((g) => g.textContent.includes("진통제")).textContent.includes("2건"), "띄어쓰기만 다른 약 이름은 한 카드로 묶음");
+
+  console.log("\n[일기]");
+  click(B.w, byText(B.w, "일기", ".tab"));
+  await waitFor(() => $(B.w, "[data-act=dnew]"), "일기 화면");
+  ok($$(B.w, ".tab").length === 7 && text(B.w).includes("아직 쓴 일기가 없습니다"), "하단 탭 7개, 빈 일기 안내");
+  click(B.w, $(B.w, "[data-act=dnew]"));
+  ok($(B.w, "#dy-d").value === TODAY, "새 일기는 오늘 날짜로 시작");
+  $(B.w, "#dy-t").value = "푹 잔 날"; $(B.w, "#dy-b").value = "첫 줄\n둘째 줄"; click(B.w, $(B.w, '[data-act=dsave][data-id="new"]')); await settle();
+  const de = mock.db.diary_entries.find((x) => x.user_id === mock.users[0].id);
+  ok(de && de.date === TODAY && de.title === "푹 잔 날" && de.body === "첫 줄\n둘째 줄", "일기 저장");
+  ok($(B.w, ".dy") && $(B.w, ".dy").textContent.includes("푹 잔 날"), "일기 목록 표시");
+  click(B.w, $(B.w, `[data-act=dedit2][data-id="${de.id}"]`));
+  $(B.w, "#dy-d").value = YDAY; $(B.w, "#dy-b").value = "고친 내용"; click(B.w, $(B.w, `[data-act=dsave][data-id="${de.id}"]`)); await settle();
+  ok(mock.db.diary_entries.length === 1 && mock.db.diary_entries[0].date === YDAY && mock.db.diary_entries[0].body === "고친 내용", "일기 수정 (날짜 포함)");
+  click(B.w, $(B.w, `[data-act=dedit2][data-id="${de.id}"]`));
+  click(B.w, $(B.w, `[data-act=arm][data-k="ddel:${de.id}"]`)); click(B.w, $(B.w, `[data-act=arm][data-k="ddel:${de.id}"]`)); await settle();
+  ok(!mock.db.diary_entries.length, "일기 삭제");
 
   console.log("\n[로그아웃 / 로그인]");
   click(B.w, $(B.w, '[data-act=nav][data-v="set"]'));

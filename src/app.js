@@ -51,6 +51,7 @@ const ICON = {
   rep: '<svg viewBox="0 0 24 24"><path d="M4 20V4M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>',
   med: '<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-40 12 12)"/><path d="M10.5 7.2l6.3 7.6"/></svg>',
   gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  diary: '<svg viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3"/><path d="M9 8h6"/></svg>',
   medlog: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 19h4"/><circle cx="9" cy="7" r="1"/></svg>',
   cam: '<svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
 };
@@ -65,7 +66,7 @@ let S = emptyState();
 let UI = {};
 let ARM = null, LOGIN_ERR = "", SIGNUP = false, LOAD_ERR = "", lastLoad = 0;
 
-function emptyState() { return { items: [], rec: {}, meal: {}, meds: [], sup: {}, rl: {}, once: {}, visit: {}, calDef: null }; }
+function emptyState() { return { items: [], rec: {}, meal: {}, meds: [], sup: {}, rl: {}, once: {}, visit: {}, calDef: null, calHide: [], diary: [] }; }
 const uiKey = () => `naemom:ui:${USER ? USER.id : "-"}`;
 function loadUI() {
   let u = {};
@@ -109,8 +110,8 @@ async function fetchAll(table, order) {
 const DEFAULT_ITEMS = [
   ["몸 상태", "scale", null, ["매우 좋음", "좋음", "보통", "나쁨", "매우 나쁨"], false, true], // 마지막 true: 숫자가 높을수록 나쁜 상태
   ["체중", "number", "kg"],
-  ["운동", "bool"],
-  ["요가", "bool"],
+  ["운동", "bool", null, null, true], // 무엇을 했는지 적는 칸 (v1.6)
+  ["요가", "bool", null, null, true],
   ["간식", "bool", null, null, true], // 마지막 true: '예'를 고르면 어떤 간식인지 적는 칸을 보여 준다
   ["삼시세끼", "meal"],
   ["배변", "choice", null, ["묽음", "정상", "단단함"]],
@@ -146,7 +147,7 @@ async function createDefaults() {
 }
 
 async function loadAll() {
-  const [items, opts, recs, meals, meds, sups, onces, syms, symOpts, symRecs, visits, regLogs, vphotos, settings] = await Promise.all([
+  const [items, opts, recs, meals, meds, sups, onces, syms, symOpts, symRecs, visits, regLogs, vphotos, settings, diary] = await Promise.all([
     fetchAll("items", ["sort_order", "id"]),
     fetchAll("item_options", ["sort_order", "id"]),
     fetchAll("daily_records", ["date", "item_id"]),
@@ -161,10 +162,12 @@ async function loadAll() {
     fetchAll("regular_med_logs", ["date", "medication_id"]),
     fetchAll("visit_photos", ["visit_date", "created_at", "id"]),
     fetchAll("user_settings", ["user_id"]),
+    fetchAll("diary_entries", ["date", "created_at", "id"]),
   ]);
   if (!items.length) { await createDefaults(); return loadAll(); }
-  /* v1.0에서 가입해 주요 증상이 없는 계정은 몸 상태에 기본 증상을 만들어 준다 */
-  if (!syms.length) {
+  /* v1.0에서 가입해 주요 증상이 없는 계정은 몸 상태에 기본 증상을 만들어 준다.
+     증상을 모두 지운 계정은 설정 행(user_settings)이 있으므로 다시 만들지 않는다 (v1.6) */
+  if (!syms.length && !settings.length) {
     const base = items.find((x) => x.type === "scale" && x.name === "몸 상태") || items.find((x) => x.type === "scale");
     if (base) { await createSymptomDefaults(base.id); return loadAll(); }
   }
@@ -212,6 +215,8 @@ async function loadAll() {
   const st = settings[0];
   if (st && Array.isArray(st.cal_defaults)) s.calDef = st.cal_defaults;
   else { const c = s.items.find((x) => x.type === "scale"); s.calDef = ["visit", c ? c.id : null, "supp"].filter(Boolean); }
+  s.calHide = st && Array.isArray(st.cal_hidden) ? st.cal_hidden : [];
+  s.diary = diary.map((x) => ({ id: x.id, d: x.date, title: x.title || "", body: x.body || "", at: Date.parse(x.updated_at || x.created_at) || 0 }));
   S = s;
   lastLoad = Date.now();
   if (!Array.isArray(UI.calF)) { UI.calF = [...s.calDef]; saveUI(); }
@@ -236,6 +241,8 @@ async function run(label, ...queries) {
   } finally { pending--; }
 }
 const now = () => new Date().toISOString();
+const settingsRow = () => ({ user_id: USER.id, cal_defaults: S.calDef, cal_hidden: S.calHide || [], updated_at: now() });
+const saveSettings = (label) => run(label, sb.from("user_settings").upsert(settingsRow(), { onConflict: "user_id" }));
 
 function recRow(it, d, val) {
   const row = { user_id: USER.id, date: d, item_id: it.id, value_num: null, value_bool: null, value_text: null, option_id: null, updated_at: now() };
@@ -345,10 +352,10 @@ function render() {
   }
   if (PHASE === "login") { el.innerHTML = vLogin(); return; }
   const v = UI.view;
-  const views = { today: vToday, cal: vCal, rep: vRep, med: vMed, set: vSet, lv: vLv, visit: vVisit, day: vDay, medlog: vMedLog };
+  const views = { today: vToday, cal: vCal, rep: vRep, med: vMed, set: vSet, lv: vLv, visit: vVisit, day: vDay, medlog: vMedLog, diary: vDiary };
   el.innerHTML = `<header class="top"><p class="brand">내몸일기</p><button class="iconbtn${v === "set" ? " on" : ""}" data-act="nav" data-v="set" aria-label="항목 설정">${ICON.gear}</button></header>
  <main>${(views[v] || vToday)()}</main>
- <nav class="tabs"><div class="tabs-in">${[["today", "오늘 기록"], ["cal", "캘린더"], ["rep", "리포트"], ["med", "약/영양제"], ["medlog", "약 기록"], ["visit", "치료 일지"]].map(([k, l]) => `<button class="tab" data-act="nav" data-v="${k}" ${v === k || ((v === "lv" || v === "day") && k === "cal") ? 'aria-current="page"' : ""}>${ICON[k]}${l}</button>`).join("")}</div></nav>`;
+ <nav class="tabs"><div class="tabs-in">${[["today", "오늘 기록"], ["cal", "캘린더"], ["rep", "리포트"], ["med", "약/영양제"], ["medlog", "약 기록"], ["visit", "치료 일지"], ["diary", "일기"]].map(([k, l]) => `<button class="tab" data-act="nav" data-v="${k}" ${v === k || ((v === "lv" || v === "day") && k === "cal") ? 'aria-current="page"' : ""}>${ICON[k]}${l}</button>`).join("")}</div></nav>`;
 }
 function armBtn(key, label, cls, armed) { const on = ARM === key; return `<button class="${cls}${on ? " armed" : ""}" data-act="arm" data-k="${key}">${on ? armed || "한 번 더 누르면 실행" : label}</button>`; }
 
@@ -376,8 +383,80 @@ function vToday() {
   let h = `<div class="datebar"><button class="iconbtn" data-act="dshift" data-n="-1" aria-label="이전 날">‹</button>
   <div class="mid"><div class="d">${dlabel(d)}</div>${d === TODAY ? '<span class="small muted">오늘</span>' : '<button class="link" data-act="dtoday">오늘로 이동</button>'}</div>
   <button class="iconbtn" data-act="dshift" data-n="1" aria-label="다음 날" ${d >= TODAY ? "disabled" : ""}>›</button></div><div class="stack">`;
+  h += copyPanel(d);
   for (const it of visItems()) h += itemCard(it, d, recOf(d, it.id));
   return h + medCard(d) + visitCard(d) + "</div>";
+}
+/* 기록 복사 (v1.6): 다른 날의 기록을 이 날짜로 가져온다. 이미 적은 칸은 덮어쓰지 않고 빈 칸만 채운다.
+   사진, 약 차도, 기타 메모(텍스트 항목), 치료 일지는 가져오지 않는다 */
+const CP_GROUPS = [["scale", "몸 상태/주요 증상"], ["etc", "그 밖의 항목 (체중, 운동/요가/간식 메모, 배변 등)"], ["meal", "식사 (메뉴, 증상)"], ["meds", "영양제/정기 약 복용 체크"], ["once", "일회성 약 (이름, 증상)"]];
+const cpGroups = () => UI.cpG || CP_GROUPS.map((x) => x[0]);
+function recDays() {
+  return [...new Set([...Object.keys(S.rec).filter((d) => Object.keys(S.rec[d]).length), ...Object.keys(S.meal).filter((d) => Object.values(S.meal[d]).some((m) => m && (m.t || m.s))), ...Object.keys(S.once).filter((d) => S.once[d].length)])].sort();
+}
+function copyPanel(d) {
+  if (!UI.cpOpen) return '<div class="cpbar"><button class="link" data-act="cpopen">다른 날 기록 복사해 오기</button></div>';
+  const prev = recDays().filter((x) => x < d).pop() || "", src = UI.cpFrom && UI.cpFrom !== d ? UI.cpFrom : prev, g = cpGroups();
+  return `<section class="card cpbox"><div class="row" style="justify-content:space-between"><strong class="small">다른 날 기록 복사해 오기</strong><button class="link" data-act="cpopen">닫기</button></div>
+  <label class="small muted cpd">어느 날 기록을 가져올까요?<input type="date" id="cp-from" data-ch="cpfrom" value="${src}" max="${TODAY}"></label>
+  ${src ? `<div class="cpsum small">${cpSummary(src)}</div>` : ""}
+  <div class="cpg">${CP_GROUPS.map(([k, l]) => `<label class="check"><input type="checkbox" id="cpg-${k}" data-ch="cpg" data-k="${k}" ${g.includes(k) ? "checked" : ""}><span>${l}</span></label>`).join("")}</div>
+  <p class="small muted" style="margin:0">${dlabel(d)}에 이미 적은 칸은 그대로 두고, 비어 있는 칸만 채웁니다. 사진, 약 차도, 기타 메모, 치료 일지는 가져오지 않습니다.</p>
+  <button class="btn sm" data-act="cpdo" ${src ? "" : "disabled"}>${src ? `${md(src)} 기록 복사해 오기` : "가져올 날짜를 골라 주세요"}</button></section>`;
+}
+function cpSummary(src) {
+  const r = S.rec[src] || {}, parts = [];
+  visItems().forEach((it) => {
+    const x = r[it.id]; if (!x) return;
+    if (it.type === "scale" && x.o) { const op = it.options.find((o) => o.id === x.o); if (op) parts.push(`${it.name} ${op.label}`); }
+    else if (it.type === "bool" && x.v) parts.push(x.t ? `${it.name} ${x.t}` : it.name);
+    else if (it.type === "number") parts.push(`${it.name} ${x.v}${it.unit || ""}`);
+    else if (it.type === "choice") { const op = it.options.find((o) => o.id === x.o); parts.push(`${it.name} ${x.v ? (op ? op.label : "있음") : "없음"}`); }
+  });
+  const m = S.meal[src] || {}, mn = MEALS.filter(([k]) => m[k] && (m[k].t || m[k].s)).length; if (mn) parts.push(`식사 ${mn}끼`);
+  const on = (S.once[src] || []).map((x) => x.n); if (on.length) parts.push(on.join(", "));
+  return parts.length ? `<span class="muted">${md(src)} 기록:</span> ${esc(parts.join(" · "))}` : '<span class="muted">이 날짜에는 기록이 없습니다.</span>';
+}
+function copyDay(from, to, g) {
+  let n = 0; const qs = [], meals = [], src = S.rec[from] || {};
+  for (const it of visItems()) {
+    const x = src[it.id]; if (!x || it.type === "text" || it.type === "meal") continue;
+    if (!g.includes(it.type === "scale" ? "scale" : "etc")) continue;
+    const y = recOf(to, it.id);
+    if (it.type === "scale") {
+      const vis = (sid) => (it.symptoms || []).some((q) => q.id === sid && !q.hidden);
+      if (x.o && !(y && y.o)) { patchScale(to, it, { o: x.o }); qs.push(sb.from("daily_records").upsert(recRow(it, to, { o: x.o }), { onConflict: "user_id,date,item_id" })); n++; }
+      if (x.sx) {
+        const sx = Object.assign({}, (recOf(to, it.id) || {}).sx); let add = 0;
+        for (const [sid, v] of Object.entries(x.sx)) if (!(sid in sx) && vis(sid)) { sx[sid] = v; add++; qs.push(sb.from("symptom_records").upsert({ user_id: USER.id, date: to, symptom_id: sid, option_id: v }, { onConflict: "user_id,date,symptom_id" })); }
+        if (add) { patchScale(to, it, { sx }); n += add; }
+      }
+    } else if (!y) {
+      const v = JSON.parse(JSON.stringify(x)); setLocal(to, it.id, v);
+      qs.push(sb.from("daily_records").upsert(recRow(it, to, v), { onConflict: "user_id,date,item_id" })); n++;
+    }
+  }
+  if (g.includes("meal")) {
+    const a = S.meal[from] || {}, b = (S.meal[to] = S.meal[to] || {});
+    for (const [k] of MEALS) { const x = a[k]; if (!x || !(x.t || x.s)) continue; const y = (b[k] = b[k] || {}); let c = 0; if (!y.t && x.t) { y.t = x.t; c++; } if (!y.s && x.s) { y.s = x.s; c++; } if (c) { n += c; meals.push(k); } else if (!y.t && !y.s && !y.p) delete b[k]; }
+  }
+  if (g.includes("meds")) {
+    for (const id of Object.keys(S.sup[from] || {})) { const m = S.meds.find((q) => q.id === id); if (!m || !active(m, to)) continue; const q = (S.sup[to] = S.sup[to] || {}); if (!q[id]) { q[id] = true; n++; qs.push(sb.from("supplement_logs").upsert({ user_id: USER.id, date: to, medication_id: id }, { onConflict: "user_id,date,medication_id" })); } }
+    for (const id of Object.keys(S.rl[from] || {})) { const m = S.meds.find((q) => q.id === id); if (!m || !active(m, to)) continue; const q = (S.rl[to] = S.rl[to] || {}); if (!q[id]) { q[id] = { eff: "" }; n++; qs.push(sb.from("regular_med_logs").upsert({ user_id: USER.id, date: to, medication_id: id, effect: null }, { onConflict: "user_id,date,medication_id" })); } }
+  }
+  if (g.includes("once")) {
+    const a = S.once[from] || [], b = (S.once[to] = S.once[to] || []), key = (v) => v.replace(/\s+/g, "");
+    for (const x of a) if (!b.some((y) => key(y.n) === key(x.n))) { const z = { id: uuid(), n: x.n, sym: x.sym || "", eff: "" }; b.push(z); n++; qs.push(sb.from("onetime_meds").insert({ id: z.id, user_id: USER.id, date: to, name: z.n, symptom: z.sym || null, effect: null })); }
+  }
+  if (qs.length) run("기록 복사", ...qs);
+  meals.forEach((k) => saveMeal(to, k));
+  return n;
+}
+function notePh(n) {
+  if (n === "운동") return "어떤 운동을 했나요? (예: 걷기 30분)";
+  if (n === "요가") return "어떤 요가를 했나요? (예: 하타 요가 50분)";
+  const c = n.charCodeAt(n.length - 1), jong = c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28;
+  return `어떤 ${n}${jong ? "이었" : "였"}나요?`;
 }
 function itemCard(it, d, r) {
   let body = "", hint = "";
@@ -394,7 +473,7 @@ function itemCard(it, d, r) {
   } else if (it.type === "bool" || it.type === "choice") {
     const L = it.type === "bool" ? ["예", "아니오"] : ["있음", "없음"];
     const withNote = it.type === "bool" && it.note && r && r.v;
-    body = `<div class="seg boolrow">${[[true, L[0]], [false, L[1]]].map(([v, l]) => `<button class="chip${r && r.v === v ? " on" : ""}" data-act="bool" data-i="${it.id}" data-v="${v}">${l}</button>`).join("")}${withNote ? `<input type="text" class="bnote" id="bn-${it.id}" data-ch="bnote" data-i="${it.id}" value="${esc(r.t || "")}" placeholder="어떤 ${esc(it.name)}이었나요?">` : ""}</div>`;
+    body = `<div class="seg boolrow">${[[true, L[0]], [false, L[1]]].map(([v, l]) => `<button class="chip${r && r.v === v ? " on" : ""}" data-act="bool" data-i="${it.id}" data-v="${v}">${l}</button>`).join("")}${withNote ? `<input type="text" class="bnote" id="bn-${it.id}" data-ch="bnote" data-i="${it.id}" value="${esc(r.t || "")}" placeholder="${esc(notePh(it.name))}">` : ""}</div>`;
     if (it.type === "choice" && r && r.v) body += `<div class="seg" style="margin-top:8px">${it.options.filter((x) => !x.hidden || x.id === r.o).map((x) => `<button class="chip sm${r.o === x.id ? " on" : ""}" data-act="pick" data-i="${it.id}" data-o="${x.id}">${esc(x.label)}</button>`).join("")}</div>`;
   } else if (it.type === "meal") {
     const m = S.meal[d] || {};
@@ -429,7 +508,7 @@ function medCard(d) {
     return `<div class="regx"><label class="check"><input type="checkbox" id="r-${m.id}" data-ch="reg" data-m="${m.id}" ${x ? "checked" : ""}><span>${esc(m.name)}${m.end ? ` <span class="small muted">~${md(m.end)}</span>` : ""}</span></label>${x ? `<label class="eff"><span>차도</span><input type="text" id="re-${m.id}" data-ch="regeff" data-m="${m.id}" value="${esc(x.eff || "")}" placeholder="먹고 나서 어땠나요? (나중에 적어도 됩니다)"></label>` : ""}</div>`;
   }).join("") : '<p class="empty">없음</p>';
   h += '<p class="small muted" style="margin:12px 0 0">일회성 복용</p>';
-  h += once.map((x) => `<div class="oncex"><div class="row" style="justify-content:space-between"><strong>${esc(x.n)}</strong><button class="mini" data-act="oncedel" data-id="${x.id}">삭제</button></div>${x.sym ? `<span class="small muted">증상: ${esc(x.sym)}</span>` : ""}<label class="eff"><span>차도</span><input type="text" id="oe-${x.id}" data-ch="onceeff" data-id="${x.id}" value="${esc(x.eff || "")}" placeholder="먹고 나서 어땠나요? (나중에 적어도 됩니다)"></label></div>`).join("");
+  h += once.map((x) => `<div class="oncex"><div class="onm"><input type="text" class="nm" id="on-n-${x.id}" data-ch="oncename" data-id="${x.id}" value="${esc(x.n)}" aria-label="약 이름"><button class="mini" data-act="oncedel" data-id="${x.id}">삭제</button></div><label class="eff"><span>증상</span><input type="text" id="os-${x.id}" data-ch="oncesym" data-id="${x.id}" value="${esc(x.sym || "")}" placeholder="왜 드셨나요? (예: 두통)"></label><label class="eff"><span>차도</span><input type="text" id="oe-${x.id}" data-ch="onceeff" data-id="${x.id}" value="${esc(x.eff || "")}" placeholder="먹고 나서 어땠나요? (나중에 적어도 됩니다)"></label></div>`).join("");
   h += '<div class="onceform"><input type="text" id="once-n" placeholder="약 이름"><div class="two"><input type="text" id="once-sym" placeholder="증상 (예: 두통)"><input type="text" id="once-eff" placeholder="차도 (선택)"></div><button class="btn sm" data-act="onceadd">일회성 약 추가</button></div></section>';
   return h;
 }
@@ -489,28 +568,30 @@ const isScale = (k) => { const it = itemById(k); return !!it && it.type === "sca
 /* 단계를 1(빨강)~5(초록) 색 칸으로 환산. 높을수록 나쁜 항목은 색 방향을 뒤집는다 */
 function lvOf(it, s) { const n = it.options.length, v = n <= 1 ? 5 : Math.round(1 + (4 * (s - 1)) / (n - 1)); return it.bad ? 6 - v : v; }
 function lvCircle(k, d) { const it = itemById(k), s = score(it, recOf(d, k)); return s ? `<span class="lvc lv${lvOf(it, s)}" title="${esc(it.name)} ${s}단계">${s}</span>` : ""; }
+function calKeys() { const h = S.calHide || []; return filterKeys().filter((x) => !h.includes(x.k)); }
 function filterKeys() {
-  const symAt = visItems().findIndex((i) => i.symptoms && i.symptoms.length);
+  const symAt = visItems().findIndex((i) => (i.symptoms || []).some((y) => !y.hidden));
   return [{ k: "visit", n: "병원 치료" }, ...visItems().flatMap((i, j) => (j === symAt ? [{ k: i.id, n: i.name }, { k: "sym", n: "주요 증상" }] : [{ k: i.id, n: i.name }])), { k: "supp", n: "영양제" }, { k: "reg", n: "정기 복용 약" }, { k: "once", n: "일회성 약" }]; }
 function calTag(k, d) {
   const T = (txt, cls) => `<span class="tg c${cls ? " " + cls : ""}" style="--c:${colorOf(k)}">${txt}</span>`;
-  if (k === "supp") { const a = S.meds.filter((m) => m.kind === "supplement" && active(m, d)); if (!a.length) return ""; const t = a.filter((m) => (S.sup[d] || {})[m.id]).length; return T(`영양 ${t}/${a.length}`, t === a.length ? "solid" : ""); }
-  if (k === "reg") { const a = S.meds.filter((m) => m.kind === "regular" && active(m, d)); if (!a.length) return ""; const t = a.filter((m) => (S.rl[d] || {})[m.id]).length; return T(`약 ${t}/${a.length}`, t === a.length ? "solid" : "line"); }
+  if (k === "supp") { const a = S.meds.filter((m) => m.kind === "supplement" && active(m, d)); if (!a.length) return ""; const t = a.filter((m) => (S.sup[d] || {})[m.id]).length; return `<span class="tg c${t === a.length ? " solid" : ""}" style="--c:${colorOf(k)}" title="영양제 ${t}/${a.length}">${t}/${a.length}</span>`; }
+  if (k === "reg") { const a = S.meds.filter((m) => m.kind === "regular" && active(m, d)); if (!a.length) return ""; const t = a.filter((m) => (S.rl[d] || {})[m.id]).length; return `<span class="tg c ${t === a.length ? "solid" : "line"}" style="--c:${colorOf(k)}" title="정기 복용 약 ${t}/${a.length}">${t}/${a.length}</span>`; }
   if (k === "sym") { const es = visItems().flatMap((it) => symList(it, recOf(d, it.id))); return es.length ? `<span class="tg c" style="--c:${colorOf(k)}" title="${es.map(symLabel).join(", ")}">증상 ${es.length}</span>` : ""; }
   if (k === "once") { const a = S.once[d] || []; return a.length ? T(`${esc(a[0].n)}${a.length > 1 ? ` 외 ${a.length - 1}` : ""}`) : ""; }
   const it = itemById(k); if (!it) return "";
   if (it.type === "meal") { const m = S.meal[d] || {}; const n = MEALS.filter(([x]) => m[x] && (m[x].t || m[x].th)).length; return n ? T(`식사 ${n}/3`) : ""; }
   const r = recOf(d, k); if (r == null) return "";
-  const sh = esc(it.name.slice(0, 2));
+  /* 칸이 좁아(아이폰 기준 한 칸 약 45px) 항목 이름은 빼고 값만 보여 준다. 항목은 색으로 구분하고, 전체 내용은 title로 남긴다 */
+  const sh = esc(it.name.slice(0, 2)), T2 = (txt, full, cls) => `<span class="tg c${cls ? " " + cls : ""}" style="--c:${colorOf(k)}" title="${esc(it.name)} ${full}">${txt}</span>`;
   if (it.type === "number") return T(`${r.v}${esc(it.unit || "")}`);
-  if (it.type === "bool") return r.v ? T(it.note && r.t ? `${sh} ${esc(r.t)}` : sh, "solid") : "";
-  if (it.type === "choice") { if (!r.v) return T(`${sh} 없음`); const op = it.options.find((x) => x.id === r.o); return T(`${sh}${op ? " " + esc(op.label) : ""}`, "solid"); }
+  if (it.type === "bool") return r.v ? T2(it.note && r.t ? esc(r.t) : sh, it.note && r.t ? esc(r.t) : "", "solid") : "";
+  if (it.type === "choice") { if (!r.v) return T2("없음", "없음"); const op = it.options.find((x) => x.id === r.o); return T2(op ? esc(op.label) : sh, op ? esc(op.label) : "있음", "solid"); }
   if (it.type === "text") return r.v ? T("메모") : "";
   return "";
 }
 function vCal() {
   const m = UI.cal, [y, mo] = m.split("-").map(Number);
-  const keys = filterKeys(), sel = (UI.calF || []).filter((k) => keys.some((x) => x.k === k));
+  const keys = calKeys(), sel = (UI.calF || []).filter((k) => keys.some((x) => x.k === k));
   let h = `<div class="datebar"><button class="iconbtn" data-act="calshift" data-n="-1" aria-label="이전 달">‹</button><div class="mid"><div class="d">${y}년 ${mo}월</div>${m !== TODAY.slice(0, 7) ? '<button class="link" data-act="caltoday">이번 달로</button>' : ""}</div><button class="iconbtn" data-act="calshift" data-n="1" aria-label="다음 달">›</button></div>`;
   h += `<div class="filters">${keys.map((x) => `<button class="chip sm f${sel.includes(x.k) ? " on" : ""}" style="--c:${colorOf(x.k)}" data-act="calf" data-k="${x.k}" aria-pressed="${sel.includes(x.k)}"><i class="dot${isScale(x.k) ? " ramp" : ""}"></i>${esc(x.n)}</button>`).join("")}</div>`;
   h += `<div class="cal">${["일", "월", "화", "수", "목", "금", "토"].map((x) => `<div class="dow">${x}</div>`).join("")}`;
@@ -520,7 +601,7 @@ function vCal() {
     h += `<button class="cell${out ? " out" : ""}${fut ? " fut" : ""}${d === TODAY ? " today" : ""}${sel.includes("visit") && S.visit[d] ? " hv" : ""}" data-act="calday" data-d="${d}" ${fut ? "disabled" : ""} aria-label="${dlabel(d)}${S.visit[d] ? ", 병원 치료" : ""}"><span class="hd"><span class="dn"><span class="n">${pd(d).getDate()}</span>${sel.includes("visit") ? visitIcon(d) : ""}</span>${fut ? "" : sel.filter(isScale).map((k) => lvCircle(k, d)).join("")}</span>${fut ? "" : sel.filter((k) => !isScale(k) && k !== "visit").map((k) => calTag(k, d)).join("")}</button>`;
     d = add(d, 1);
   }
-  h += `</div>${sel.filter(isScale).map((k) => { const it = itemById(k); return `<div class="legend"><span class="small muted">${esc(it.name)}: 단계를 누르면 그 단계로 기록한 날을 모아 볼 수 있습니다</span><div class="lgs">${it.options.map((x, j) => `<button class="lg" data-act="lvgo" data-i="${it.id}" data-n="${j + 1}"><span class="lvc lv${lvOf(it, j + 1)}">${j + 1}</span>${esc(x.label)}</button>`).join("")}</div></div>`; }).join("")}<p class="small muted">${sel.length ? "날짜를 누르면 그날의 기록을 볼 수 있습니다. 처음 켜져 있는 항목은 설정에서 바꿀 수 있습니다." : "위에서 보고 싶은 항목을 하나 이상 선택해 주세요."}</p>`;
+  h += `</div>${sel.filter(isScale).map((k) => { const it = itemById(k); return `<div class="legend"><span class="small muted">${esc(it.name)}: 단계를 누르면 그 단계로 기록한 날을 모아 볼 수 있습니다</span><div class="lgs">${it.options.map((x, j) => `<button class="lg" data-act="lvgo" data-i="${it.id}" data-n="${j + 1}"><span class="lvc lv${lvOf(it, j + 1)}">${j + 1}</span>${esc(x.label)}</button>`).join("")}</div></div>`; }).join("")}<p class="small muted">${sel.length ? "칸 안의 글자는 위쪽 항목과 같은 색으로 구분하며, 값만 짧게 표시합니다 (예: 배변 \"정상\", 영양제 \"2/3\"). 날짜를 누르면 그날의 기록을 볼 수 있습니다. 위쪽 항목은 설정의 \"캘린더 항목\"에서 바꿀 수 있습니다." : "위에서 보고 싶은 항목을 하나 이상 선택해 주세요."}</p>`;
   return h;
 }
 
@@ -703,9 +784,28 @@ function vRep() {
   return h + "</div>";
 }
 
+/* 일기 (v1.6): 기록/캘린더와 상관없이 자유롭게 쓰는 글 */
+function vDiary() {
+  const ds = (S.diary || []).slice().sort((a, b) => b.d.localeCompare(a.d) || b.at - a.at), ed = UI.dEdit;
+  let h = '<div class="datebar"><span style="width:38px;flex:none"></span><div class="mid"><div class="d">일기</div><span class="small muted">기록과 상관없이 자유롭게 씁니다</span></div><span style="width:38px;flex:none"></span></div>';
+  if (ed === "new") h += diaryForm({ id: "new", d: TODAY, title: "", body: "" });
+  else h += '<button class="btn" style="width:100%;margin-bottom:12px" data-act="dnew">새 일기 쓰기</button>';
+  if (!ds.length && ed !== "new") return h + '<p class="empty">아직 쓴 일기가 없습니다.</p>';
+  h += '<div class="stack">';
+  for (const x of ds) {
+    if (ed === x.id) { h += diaryForm(x); continue; }
+    const open = (UI.dOpen || {})[x.id];
+    h += `<section class="card dy"><button class="dyhd" data-act="dopen" data-id="${x.id}"><span class="dd">${md(x.d)} <span class="muted">${"일월화수목금토"[pd(x.d).getDay()]}요일</span></span>${x.title ? `<strong>${esc(x.title)}</strong>` : ""}</button><p class="dybody${open ? " open" : ""}" data-act="dopen" data-id="${x.id}">${esc(x.body)}</p><div class="row" style="justify-content:flex-end"><button class="link" data-act="dedit2" data-id="${x.id}">수정</button></div></section>`;
+  }
+  return h + "</div>";
+}
+function diaryForm(x) {
+  return `<section class="card dyform"><div class="row" style="justify-content:space-between"><strong class="small">${x.id === "new" ? "새 일기" : "일기 수정"}</strong><button class="link" data-act="dcancel">닫기</button></div><label class="small muted">날짜<input type="date" id="dy-d" value="${x.d}" max="${TODAY}"></label><input type="text" id="dy-t" value="${esc(x.title || "")}" placeholder="제목 (선택)" aria-label="제목"><textarea id="dy-b" rows="8" placeholder="오늘 있었던 일, 드는 생각을 자유롭게 적어 보세요." aria-label="일기 내용">${esc(x.body || "")}</textarea><div class="row" style="justify-content:space-between">${x.id === "new" ? "<span></span>" : armBtn("ddel:" + x.id, "삭제", "btn sm danger", "한 번 더 누르면 삭제")}<button class="btn sm" data-act="dsave" data-id="${x.id}">저장</button></div></section>`;
+}
+
 /* 약 기록 모음: 차도를 적은 날을 약 이름별로 모은다. 띄어쓰기/대소문자만 다른 이름은 같은 약으로 본다 */
 function medGroups() {
-  const key = (n) => String(n || "").trim().replace(/\s+/g, " ").toLowerCase(), G = {};
+  const key = (n) => String(n || "").replace(/\s+/g, "").toLowerCase(), G = {};
   const put = (name, row) => { const k = key(name); if (!k) return; const g = (G[k] = G[k] || { k, name: String(name).trim(), rows: [], kinds: new Set() }); g.rows.push(row); g.kinds.add(row.kind); };
   for (const [d, o] of Object.entries(S.rl || {})) for (const [id, q] of Object.entries(o)) { if (!q || !q.eff) continue; const m = S.meds.find((x) => x.id === id); if (m) put(m.name, { d, kind: "정기", eff: q.eff }); }
   for (const [d, a] of Object.entries(S.once || {})) for (const x of a) if (x.eff) put(x.n, { d, kind: "일회성", sym: x.sym, eff: x.eff });
@@ -725,7 +825,7 @@ function vMedLog() {
     if (g.rows.length > 3) h += `<button class="link" style="margin-top:6px" data-act="mlmore" data-k="${esc(g.k)}">${open ? "접기" : `${g.rows.length - 3}건 더 보기`}</button>`;
     h += "</section>";
   }
-  return h + '</div><p class="small muted">이름이 같은 약은 하나로 묶습니다 (띄어쓰기와 대소문자는 구분하지 않음). 기록을 누르면 그날 기록을 볼 수 있습니다.</p>';
+  return h + '</div><p class="small muted">띄어쓰기와 영문 대소문자만 다른 이름은 같은 약으로 묶습니다 (예: 케이캡정25mg = 케이캡정 25mg). 기록을 누르면 그날 기록을 볼 수 있습니다.</p>';
 }
 
 /* meds */
@@ -750,7 +850,7 @@ function vMed() {
       h += `<button class="link endtg" data-act="endtg" aria-expanded="${!!op}">${op ? "복용 종료된 약 접기" : `복용 종료된 약 ${ended.length}개 보기`}</button>`;
       if (op) h += `<div class="endl">${ended.map((m) => `<div class="endr"><span><strong>${esc(m.name)}</strong> <span class="num-t">${md(m.start)} ~ ${md(m.end)}</span></span><button class="mini" data-act="medit" data-m="${m.id}">수정</button>${m.note ? `<span class="nt">${esc(m.note)}</span>` : ""}</div>`).join("")}</div>`;
     }
-    h += `<div class="form"><strong class="small">새 ${title} 등록</strong><input type="text" id="ma-${kind}-n" placeholder="이름"><div class="two"><label>시작일<input type="date" id="ma-${kind}-s" value="${TODAY}"></label><label>종료일 (선택)<input type="date" id="ma-${kind}-e"></label></div><input type="text" id="ma-${kind}-note" placeholder="메모 (예: 아침 식후 1정)"><button class="btn" data-act="medadd" data-k="${kind}">등록</button></div></section>`;
+    h += UI.madd !== kind ? `<button class="btn ghost sm addbtn" data-act="maddopen" data-k="${kind}">+ 새 ${title} 등록</button></section>` : `<div class="form"><div class="row" style="justify-content:space-between"><strong class="small">새 ${title} 등록</strong><button class="link" data-act="maddopen" data-k="">닫기</button></div><input type="text" id="ma-${kind}-n" placeholder="이름"><div class="two"><label>시작일<input type="date" id="ma-${kind}-s" value="${TODAY}"></label><label>종료일 (선택)<input type="date" id="ma-${kind}-e"></label></div><input type="text" id="ma-${kind}-note" placeholder="메모 (예: 아침 식후 1정)"><button class="btn" data-act="medadd" data-k="${kind}">등록</button></div></section>`;
   }
   return h + '<p class="small muted">일회성으로 먹은 약은 오늘 기록 화면의 "복용 약" 칸에 기입합니다.</p>';
 }
@@ -762,9 +862,14 @@ function vSet() {
     const hasOpt = it.type === "scale" || it.type === "choice", open = UI.open[it.id];
     h += `<div class="item${it.hidden ? " hid" : ""}"><div class="top"><input class="nm" type="text" id="in-${it.id}" data-ch="iname" data-i="${it.id}" value="${esc(it.name)}" aria-label="항목 이름">
    <div class="row"><button class="mini" data-act="imove" data-i="${it.id}" data-n="-1" ${i === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="imove" data-i="${it.id}" data-n="1" ${i === S.items.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="ihide" data-i="${it.id}">${it.hidden ? "다시 표시" : "숨기기"}</button></div></div>
-   <div class="row"><span class="pill">${TYPES[it.type]}${it.unit ? ` · ${esc(it.unit)}` : ""}${it.type === "bool" && it.note ? " · 내용 칸" : ""}</span>${it.type === "scale" ? `<button class="link" data-act="ibad" data-i="${it.id}">${it.bad ? "높을수록 나쁨 (바꾸기)" : "높을수록 좋음 (바꾸기)"}</button>` : ""}${it.type === "bool" ? `<button class="link" data-act="inote" data-i="${it.id}">${it.note ? "내용 칸 끄기" : "내용 칸 켜기"}</button>` : ""}${it.hidden ? '<span class="pill warm">숨김</span>' : ""}${hasOpt ? `<button class="link" data-act="iopen" data-i="${it.id}">${open ? "선택지 접기" : `선택지 편집 (${it.options.filter((x) => !x.hidden).length}개)`}</button>` : ""}${it.symptoms && it.symptoms.length ? `<button class="link" data-act="symopen" data-i="${it.id}">${UI.open["sx" + it.id] ? "증상 선택지 접기" : "주요 증상 선택지 편집"}</button>` : ""}</div>`;
-    if (it.symptoms && it.symptoms.length && UI.open["sx" + it.id]) {
-      h += `<div class="opts"><p class="small muted" style="margin:0">증상마다 고를 수 있는 선택지입니다. 숨긴 선택지는 기록 화면에서 빠지고, 지난 기록에는 남습니다.</p>${it.symptoms.map((y) => `<div class="symset"><strong>${esc(y.name)}</strong>${y.options.map((x, j) => `<div class="opt${x.hidden ? " hid" : ""}"><span class="small muted">·</span><input type="text" id="sl-${x.id}" data-ch="solabel" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" value="${esc(x.label)}" aria-label="${esc(y.name)} 선택지 이름"><div class="row"><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="-1" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="1" ${j === y.options.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="sohide" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}">${x.hidden ? "표시" : "숨김"}</button></div></div>`).join("")}<div class="grid2" style="grid-template-columns:minmax(0,1fr) auto;margin-top:0"><input type="text" id="so-${y.id}" placeholder="${esc(y.name)} 새 선택지"><button class="btn sm" data-act="soadd" data-i="${it.id}" data-s="${y.id}">추가</button></div></div>`).join("")}</div>`;
+   <div class="row"><span class="pill">${TYPES[it.type]}${it.unit ? ` · ${esc(it.unit)}` : ""}${it.type === "bool" && it.note ? " · 내용 칸" : ""}</span>${it.type === "scale" ? `<button class="link" data-act="ibad" data-i="${it.id}">${it.bad ? "높을수록 나쁨 (바꾸기)" : "높을수록 좋음 (바꾸기)"}</button>` : ""}${it.type === "bool" ? `<button class="link" data-act="inote" data-i="${it.id}">${it.note ? "내용 칸 끄기" : "내용 칸 켜기"}</button>` : ""}${it.hidden ? '<span class="pill warm">숨김</span>' : ""}${hasOpt ? `<button class="link" data-act="iopen" data-i="${it.id}">${open ? "선택지 접기" : `선택지 편집 (${it.options.filter((x) => !x.hidden).length}개)`}</button>` : ""}${it.type === "scale" ? `<button class="link" data-act="symopen" data-i="${it.id}">${UI.open["sx" + it.id] ? "주요 증상 접기" : `주요 증상 편집 (${(it.symptoms || []).filter((y) => !y.hidden).length}개)`}</button>` : ""}</div>`;
+    if (it.type === "scale" && UI.open["sx" + it.id]) {
+      const ys = it.symptoms || [];
+      const optEd = (y) => y.options.map((x, j) => `<div class="opt${x.hidden ? " hid" : ""}"><span class="small muted">·</span><input type="text" id="sl-${x.id}" data-ch="solabel" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" value="${esc(x.label)}" aria-label="${esc(y.name)} 선택지 이름"><div class="row"><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="-1" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="somove" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}" data-n="1" ${j === y.options.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="sohide" data-i="${it.id}" data-s="${y.id}" data-o="${x.id}">${x.hidden ? "표시" : "숨김"}</button></div></div>`).join("") + `<div class="grid2" style="grid-template-columns:minmax(0,1fr) auto;margin-top:0"><input type="text" id="so-${y.id}" placeholder="${esc(y.name)} 새 선택지"><button class="btn sm" data-act="soadd" data-i="${it.id}" data-s="${y.id}">추가</button></div>`;
+      h += `<div class="opts"><p class="small muted" style="margin:0">기록 화면에서 ${esc(it.name)}와 함께 체크할 증상입니다. 증상 이름을 바꾸면 지난 기록에도 바뀐 이름이 보입니다. 기록이 있는 증상을 삭제하면 기록 화면에서만 빠지고, 지난 기록과 리포트에는 남습니다.</p>${ys.map((y, k) => {
+        const dk = `symdel:${it.id}:${y.id}`;
+        return `<div class="symset${y.hidden ? " hid" : ""}"><div class="symhd"><input type="text" class="nm" id="sn-${y.id}" data-ch="symname" data-i="${it.id}" data-s="${y.id}" value="${esc(y.name)}" aria-label="증상 이름"><div class="row"><button class="mini" data-act="symmove" data-i="${it.id}" data-s="${y.id}" data-n="-1" ${k === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="symmove" data-i="${it.id}" data-s="${y.id}" data-n="1" ${k === ys.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button>${y.hidden ? `<button class="mini" data-act="symshow" data-i="${it.id}" data-s="${y.id}">다시 표시</button>` : `<button class="mini${ARM === dk ? " armed" : ""}" data-act="arm" data-k="${dk}">${ARM === dk ? "정말 삭제" : "삭제"}</button>`}</div></div>${y.hidden ? '<span class="small muted">숨긴 증상 (지난 기록에만 남아 있음)</span>' : UI.open["so" + y.id] ? `<button class="link sm" data-act="soopen" data-s="${y.id}">선택지 접기</button>${optEd(y)}` : `<button class="link sm" data-act="soopen" data-s="${y.id}">선택지 편집 · ${esc(y.options.filter((x) => !x.hidden).map((x) => x.label).join("/"))}</button>`}</div>`;
+      }).join("")}<div class="symadd"><input type="text" id="sa-${it.id}" placeholder="새 증상 이름 (예: 메스꺼움)"><button class="btn sm" data-act="symadd" data-i="${it.id}">증상 추가</button></div><p class="small muted" style="margin:0">새 증상은 약함/보통/심함 선택지로 시작합니다.</p></div>`;
     }
     if (hasOpt && open) {
       h += `<div class="opts">${it.options.map((x, j) => `<div class="opt${x.hidden ? " hid" : ""}"><span class="small muted num-t">${it.type === "scale" ? j + 1 : "·"}</span><input type="text" id="ol-${x.id}" data-ch="olabel" data-i="${it.id}" data-o="${x.id}" value="${esc(x.label)}" aria-label="선택지 이름"><div class="row"><button class="mini" data-act="omove" data-i="${it.id}" data-o="${x.id}" data-n="-1" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button><button class="mini" data-act="omove" data-i="${it.id}" data-o="${x.id}" data-n="1" ${j === it.options.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button><button class="mini" data-act="ohide" data-i="${it.id}" data-o="${x.id}">${x.hidden ? "표시" : "숨김"}</button></div></div>`).join("")}
@@ -779,7 +884,7 @@ function vSet() {
   ${t === "number" ? '<input type="text" id="ni-unit" placeholder="단위 (예: 시간, 잔)">' : ""}
   ${t === "scale" || t === "choice" ? `<input type="text" id="ni-opts" placeholder="${t === "scale" ? "1단계부터 쉼표로 구분 (예: 나쁨, 보통, 좋음)" : "쉼표로 구분 (예: 적음, 보통, 많음)"}">` : ""}
   <button class="btn" data-act="iadd">항목 추가</button></div></section>`;
-  h += `<h2 class="sec">캘린더 기본 표시</h2><section class="card"><p class="small muted" style="margin:0 0 6px">캘린더 탭을 열 때 처음부터 켜 둘 항목을 고릅니다. 캘린더에서 잠깐 켜고 끈 것은 다음에 열 때 이 설정으로 돌아갑니다.</p><div class="cdgrid">${filterKeys().map((x) => `<label class="check"><input type="checkbox" id="cd-${x.k}" data-ch="caldef" data-k="${x.k}" ${(S.calDef || []).includes(x.k) ? "checked" : ""}><span>${esc(x.n)}</span></label>`).join("")}</div></section>`;
+  h += `<h2 class="sec">캘린더 항목</h2><section class="card"><p class="small muted" style="margin:0 0 4px">캘린더 위쪽에 깔리는 항목을 정합니다.</p><ul class="cvlegend small muted"><li><b>숨김</b> 캘린더 위쪽 목록에서 뺍니다 (기록은 그대로)</li><li><b>표시</b> 목록에는 있고, 눌러야 켜집니다</li><li><b>처음부터 켜기</b> 캘린더 탭을 열 때마다 켜진 상태로 시작합니다</li></ul>${filterKeys().map((x) => { const st = (S.calHide || []).includes(x.k) ? "hide" : (S.calDef || []).includes(x.k) ? "def" : "show"; return `<div class="cvrow"><span class="cvn"><i class="dot${isScale(x.k) ? " ramp" : ""}" style="--c:${colorOf(x.k)}"></i>${esc(x.n)}</span><div class="seg cvseg" role="group" aria-label="${esc(x.n)} 캘린더 표시">${[["hide", "숨김"], ["show", "표시"], ["def", "처음부터 켜기"]].map(([v, l]) => `<button class="chip sm${st === v ? " on" : ""}" data-act="calvis" data-k="${x.k}" data-v="${v}" aria-pressed="${st === v}">${l}</button>`).join("")}</div></div>`; }).join("")}</section>`;
   const id = USER && USER.email ? USER.email.split("@")[0] : "";
   h += `<h2 class="sec">계정</h2><section class="card stack"><div class="row" style="justify-content:space-between"><span>로그인 아이디 <strong>${esc(id)}</strong></span><button class="btn sm ghost" data-act="logout">로그아웃</button></div></section>`;
   return h;
@@ -810,6 +915,55 @@ const act = {
   },
   sym: (t) => { const it = itemById(t.dataset.i), d = UI.date, sx = (recOf(d, it.id) || {}).sx || {}; setSymptom(d, it, t.dataset.s, t.dataset.s in sx ? undefined : null); render(); },
   symopt: (t) => { const it = itemById(t.dataset.i), d = UI.date, sx = (recOf(d, it.id) || {}).sx || {}; setSymptom(d, it, t.dataset.s, sx[t.dataset.s] === t.dataset.o ? null : t.dataset.o); render(); },
+  soopen: (t) => { UI.open["so" + t.dataset.s] = !UI.open["so" + t.dataset.s]; saveUI(); render(); },
+  symadd: (t) => {
+    const it = itemById(t.dataset.i), v = document.getElementById("sa-" + it.id).value.trim();
+    if (!v) { toast("증상 이름을 입력해 주세요."); return; }
+    it.symptoms = it.symptoms || [];
+    if (it.symptoms.some((y) => !y.hidden && y.name === v)) { toast("이미 있는 증상입니다."); return; }
+    const y = { id: uuid(), name: v, hidden: false, options: DEFAULT_SYMPTOM_OPTIONS.map((label) => ({ id: uuid(), label, hidden: false })) };
+    it.symptoms.push(y); render(); toast(`'${v}' 증상을 추가했습니다.`);
+    run("증상 추가", sb.from("symptoms").insert({ id: y.id, user_id: USER.id, item_id: it.id, name: v, sort_order: it.symptoms.length - 1, is_hidden: false }),
+      sb.from("symptom_options").insert(y.options.map((o, j) => ({ id: o.id, user_id: USER.id, symptom_id: y.id, label: o.label, sort_order: j, is_hidden: false }))));
+  },
+  symmove: (t) => {
+    const a = itemById(t.dataset.i).symptoms, i = a.findIndex((y) => y.id === t.dataset.s), j = i + +t.dataset.n;
+    if (j < 0 || j >= a.length) return;
+    [a[i], a[j]] = [a[j], a[i]]; render();
+    run("증상 순서", ...a.map((y, k) => sb.from("symptoms").update({ sort_order: k }).eq("id", y.id)));
+  },
+  symshow: (t) => { const y = symOf(t); y.hidden = false; render(); run("증상", sb.from("symptoms").update({ is_hidden: false }).eq("id", y.id)); },
+  calvis: (t) => {
+    const k = t.dataset.k, v = t.dataset.v;
+    S.calHide = (S.calHide || []).filter((x) => x !== k); S.calDef = (S.calDef || []).filter((x) => x !== k);
+    if (v === "hide") { S.calHide.push(k); UI.calF = (UI.calF || []).filter((x) => x !== k); saveUI(); }
+    if (v === "def") S.calDef.push(k);
+    render(); saveSettings("캘린더 항목");
+  },
+  cpopen: () => { UI.cpOpen = !UI.cpOpen; UI.cpFrom = null; saveUI(); render(); },
+  cpdo: () => {
+    const d = UI.date, from = document.getElementById("cp-from").value, g = cpGroups();
+    if (!from) { toast("가져올 날짜를 골라 주세요."); return; }
+    if (from === d) { toast("같은 날짜입니다. 다른 날을 골라 주세요."); return; }
+    if (!g.length) { toast("가져올 기록을 하나 이상 골라 주세요."); return; }
+    const n = copyDay(from, d, g); UI.cpOpen = false; saveUI(); render();
+    toast(n ? `${md(from)} 기록에서 ${n}칸을 채웠습니다.` : "채울 빈 칸이 없습니다. 이미 적은 칸은 덮어쓰지 않습니다.");
+  },
+  dnew: () => { UI.dEdit = "new"; render(); const b = document.getElementById("dy-b"); if (b) b.focus(); },
+  dedit2: (t) => { UI.dEdit = t.dataset.id; render(); },
+  dcancel: () => { UI.dEdit = null; render(); },
+  dopen: (t) => { UI.dOpen = UI.dOpen || {}; UI.dOpen[t.dataset.id] = !UI.dOpen[t.dataset.id]; saveUI(); render(); },
+  dsave: (t) => {
+    const g = (i) => document.getElementById(i).value, b = g("dy-b").trim(), ti = g("dy-t").trim(), d = g("dy-d") || TODAY;
+    if (!b && !ti) { toast("내용을 입력해 주세요."); return; }
+    if (d > TODAY) { toast("오늘 이후 날짜에는 쓸 수 없습니다."); return; }
+    let x;
+    if (t.dataset.id === "new") { x = { id: uuid(), d, title: ti, body: b, at: Date.now() }; S.diary.push(x); }
+    else { x = S.diary.find((q) => q.id === t.dataset.id); if (!x) return; Object.assign(x, { d, title: ti, body: b, at: Date.now() }); }
+    UI.dEdit = null; render(); toast("일기를 저장했습니다.");
+    run("일기", sb.from("diary_entries").upsert({ id: x.id, user_id: USER.id, date: d, title: ti || null, body: b, updated_at: now() }, { onConflict: "id" }));
+  },
+  maddopen: (t) => { UI.madd = t.dataset.k || null; render(); if (UI.madd) { const el = document.getElementById(`ma-${UI.madd}-n`); if (el) el.focus(); } },
   symopen: (t) => { UI.open["sx" + t.dataset.i] = !UI.open["sx" + t.dataset.i]; saveUI(); render(); },
   somove: (t) => {
     const y = symOf(t), i = y.options.findIndex((x) => x.id === t.dataset.o), j = i + +t.dataset.n;
@@ -912,7 +1066,7 @@ const act = {
     const n = g("n"); if (!n) { toast("이름을 입력해 주세요."); return; }
     const s = g("s") || TODAY, e = g("e"); if (e && e < s) { toast("종료일이 시작일보다 빠릅니다."); return; }
     const m = { id: uuid(), kind: k, name: n, start: s, end: e, note: g("note") };
-    S.meds.push(m); render(); toast(`${n}을(를) 등록했습니다.`);
+    S.meds.push(m); UI.madd = null; render(); toast(`${n}을(를) 등록했습니다.`);
     run("약/영양제", sb.from("medications").insert({ id: m.id, user_id: USER.id, kind: k, name: n, start_date: s, end_date: e || null, note: m.note || null }));
   },
   medend: (t) => {
@@ -964,6 +1118,24 @@ const act = {
       run("치료 기록", sb.from("hospital_visits").delete().eq("date", d)).then(() => removePhotos(old)); // 사진 행은 DB에서 함께 지워진다 (on delete cascade)
       return;
     }
+    if (k.startsWith("ddel:")) {
+      const id = k.slice(5); S.diary = S.diary.filter((x) => x.id !== id); UI.dEdit = null; render(); toast("일기를 지웠습니다.");
+      run("일기", sb.from("diary_entries").delete().eq("id", id));
+      return;
+    }
+    if (k.startsWith("symdel:")) {
+      const [, iid, sid] = k.split(":"), it = itemById(iid), y = it && (it.symptoms || []).find((q) => q.id === sid); if (!y) return;
+      const used = Object.values(S.rec).some((r) => r[iid] && r[iid].sx && sid in r[iid].sx);
+      if (used) {
+        y.hidden = true; render(); toast(`기록이 있어서 '${y.name}'은 기록 화면에서만 뺐습니다. 지난 기록과 리포트에는 남습니다.`);
+        run("증상", sb.from("symptoms").update({ is_hidden: true }).eq("id", sid));
+      } else {
+        it.symptoms = it.symptoms.filter((q) => q.id !== sid); render(); toast(`'${y.name}' 증상을 삭제했습니다.`);
+        /* 설정 행이 있어야 증상을 모두 지워도 기본 증상이 다시 생기지 않는다 */
+        run("증상 삭제", sb.from("symptoms").delete().eq("id", sid), sb.from("user_settings").upsert(settingsRow(), { onConflict: "user_id" }));
+      }
+      return;
+    }
     if (k.startsWith("del:")) {
       const id = k.slice(4); S.meds = S.meds.filter((m) => m.id !== id); Object.values(S.sup).forEach((x) => delete x[id]); Object.values(S.rl).forEach((x) => delete x[id]); UI.medEdit = null; render();
       run("약/영양제", sb.from("medications").delete().eq("id", id));
@@ -1007,7 +1179,7 @@ document.addEventListener("change", async (e) => {
   }
   else if (c === "caldef") {
     const k = t.dataset.k; S.calDef = t.checked ? [...new Set([...(S.calDef || []), k])] : (S.calDef || []).filter((x) => x !== k);
-    run("캘린더 기본 표시", sb.from("user_settings").upsert({ user_id: USER.id, cal_defaults: S.calDef, updated_at: now() }, { onConflict: "user_id" }));
+    saveSettings("캘린더 기본 표시");
   }
   else if (c === "photo") {
     const f = t.files && t.files[0]; if (!f) return;
@@ -1059,6 +1231,12 @@ document.addEventListener("change", async (e) => {
     run("약/영양제", sb.from("medications").update({ start_date: m.start, end_date: m.end || null }).eq("id", m.id));
   }
   else if (c === "iname") { const v = t.value.trim(), it = itemById(t.dataset.i); if (!v) { render(); return; } it.name = v; run("항목 이름", sb.from("items").update({ name: v }).eq("id", it.id)); }
+  else if (c === "oncename") {
+    const x = (S.once[d] || []).find((o) => o.id === t.dataset.id); if (!x) return;
+    const v = t.value.trim(); if (!v) { t.value = x.n; toast("약 이름은 비울 수 없습니다. 지우려면 삭제를 눌러 주세요."); return; }
+    x.n = v; run("약 이름", sb.from("onetime_meds").update({ name: v }).eq("id", x.id));
+  }
+  else if (c === "oncesym") { const x = (S.once[d] || []).find((o) => o.id === t.dataset.id); if (x) { x.sym = t.value.trim(); run("증상", sb.from("onetime_meds").update({ symptom: x.sym || null }).eq("id", x.id)); } }
   else if (c === "onceeff") { const x = (S.once[d] || []).find((o) => o.id === t.dataset.id); if (x) { x.eff = t.value.trim(); run("차도", sb.from("onetime_meds").update({ effect: x.eff || null }).eq("id", x.id)); } }
   else if (c === "vf") { const vd = t.dataset.d, v = S.visit[vd]; if (v) { v[t.dataset.f] = t.value.trim(); saveVisit(vd); if (t.dataset.f === "next") render(); } }
   else if (c === "vdate") {
@@ -1069,6 +1247,9 @@ document.addEventListener("change", async (e) => {
     S.visit[to] = S.visit[from]; delete S.visit[from]; UI.vOpen = to; saveUI(); render();
     run("치료 일지", sb.from("hospital_visits").upsert(visitRow(to), { onConflict: "user_id,date" }), sb.from("visit_photos").update({ visit_date: to }).eq("visit_date", from), sb.from("hospital_visits").delete().eq("date", from));
   }
+  else if (c === "symname") { const y = symOf(t), v = t.value.trim(); if (!v) { t.value = y.name; toast("증상 이름은 비울 수 없습니다."); return; } y.name = v; run("증상 이름", sb.from("symptoms").update({ name: v }).eq("id", y.id)); }
+  else if (c === "cpfrom") { UI.cpFrom = t.value; saveUI(); render(); }
+  else if (c === "cpg") { const k = t.dataset.k, g = cpGroups(); UI.cpG = t.checked ? [...new Set([...g, k])] : g.filter((x) => x !== k); saveUI(); }
   else if (c === "solabel") { const v = t.value.trim(), x = symOf(t).options.find((o) => o.id === t.dataset.o); if (!v) { render(); return; } x.label = v; run("증상 선택지 이름", sb.from("symptom_options").update({ label: v }).eq("id", x.id)); }
   else if (c === "olabel") { const v = t.value.trim(), x = itemById(t.dataset.i).options.find((o) => o.id === t.dataset.o); if (!v) { render(); return; } x.label = v; run("선택지 이름", sb.from("item_options").update({ label: v }).eq("id", x.id)); }
   else if (c === "nitype") { UI.niType = t.value; saveUI(); const nm = document.getElementById("ni-name").value; render(); document.getElementById("ni-name").value = nm; }
